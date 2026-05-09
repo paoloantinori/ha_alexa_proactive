@@ -26,6 +26,45 @@ _exc_mod.HomeAssistantError = _HomeAssistantError
 
 sys.modules.setdefault("homeassistant.helpers", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.aiohttp_client", MagicMock())
+sys.modules.setdefault("homeassistant.helpers.selector", MagicMock())
+sys.modules.setdefault("homeassistant.helpers.network", MagicMock())
+sys.modules.setdefault("homeassistant.data_entry_flow", MagicMock())
+_const_mod = sys.modules.setdefault("homeassistant.const", MagicMock())
+_const_mod.CONF_CLIENT_ID = "client_id"
+_const_mod.CONF_CLIENT_SECRET = "client_secret"
+_ha_pkg.const = _const_mod
+
+
+# Provide a minimal real ConfigFlow base class so config_flow.py can
+# inherit from it and tests can instantiate actual flow objects.
+class _FakeConfigFlow:
+    VERSION = 1
+
+    def __init_subclass__(cls, **kwargs):
+        pass
+
+    def __init__(self):
+        self.hass = None
+        self._async_abort_entries_match = MagicMock()
+        self._abort_if_unique_id_configured = MagicMock()
+
+    async def async_set_unique_id(self, *a, **kw):
+        pass
+
+    def async_show_form(self, *, step_id, data_schema=None, errors=None, **kw):
+        return {"type": "form", "step_id": step_id}
+
+    def async_create_entry(self, *, title, data, **kw):
+        return {"type": "create_entry", "title": title, "data": data}
+
+
+_ce_mod = sys.modules.get("homeassistant.config_entries")
+if _ce_mod is None:
+    _ce_mod = MagicMock()
+    sys.modules["homeassistant.config_entries"] = _ce_mod
+_ce_mod.ConfigFlow = _FakeConfigFlow
+# Ensure `from homeassistant import config_entries` resolves
+_ha_pkg.config_entries = _ce_mod
 
 
 @pytest.fixture
