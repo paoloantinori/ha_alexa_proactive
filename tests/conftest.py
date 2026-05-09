@@ -28,6 +28,30 @@ sys.modules.setdefault("homeassistant.helpers", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.aiohttp_client", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.selector", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.network", MagicMock())
+
+# Mock homeassistant.components.http with a real-ish HomeAssistantView base.
+# The view's .json() method must return an aiohttp-like Response with a .body.
+from aiohttp import web as _aiohttp_web
+
+
+class _FakeHomeAssistantView:
+    requires_auth = True
+    cors_allowed = False
+
+    def __init__(self, hass=None):
+        self._hass = hass
+
+    def json(self, data):
+        import json
+        resp = MagicMock()
+        resp.body = json.dumps(data).encode()
+        return resp
+
+
+_http_mod = sys.modules.setdefault("homeassistant.components.http", MagicMock())
+_http_mod.HomeAssistantView = _FakeHomeAssistantView
+_ha_pkg.components = MagicMock()
+_ha_pkg.components.http = _http_mod
 sys.modules.setdefault("homeassistant.data_entry_flow", MagicMock())
 _const_mod = sys.modules.setdefault("homeassistant.const", MagicMock())
 _const_mod.CONF_CLIENT_ID = "client_id"

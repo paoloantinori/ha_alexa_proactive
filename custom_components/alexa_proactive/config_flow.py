@@ -5,14 +5,12 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig, SelectSelectorMode
 from homeassistant.helpers.network import get_url
 
 from .api import LWAClient
-from .const import CONF_REGION, CONF_WEBHOOK_ID, DEFAULT_REGION, DOMAIN
+from .const import CONF_REGION, DEFAULT_REGION, DOMAIN
 from .models import MODELS
 from .smapi import SMTPClient
 

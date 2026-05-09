@@ -100,6 +100,50 @@ def _make_flow(hass, ha_error):
 
 
 # ---------------------------------------------------------------------------
+# Shared test data and helpers
+# ---------------------------------------------------------------------------
+
+_USER_INPUT = {
+    "client_id": "test_id",
+    "client_secret": "test_secret",
+    "region": "eu",
+}
+
+_SETUP_RESULT = {
+    "skill_id": "amzn1.ask.skill.123",
+    "vendor_id": "VENDOR123",
+    "webhook_url": "https://example.com/api/alexa_proactive",
+}
+
+
+def _set_flow_credentials(flow):
+    """Set the credential attributes that tests need on a flow instance."""
+    flow._client_id = _USER_INPUT["client_id"]
+    flow._client_secret = _USER_INPUT["client_secret"]
+    flow._region = _USER_INPUT["region"]
+
+
+def _patch_lwa(autospec=True):
+    """Return a patch context for LWAClient."""
+    return patch("alexa_proactive.config_flow.LWAClient", autospec=autospec)
+
+
+def _patch_smapi():
+    """Return a patch context for SMTPClient."""
+    return patch("alexa_proactive.config_flow.SMTPClient", autospec=True)
+
+
+def _patch_get_url(url="https://example.com"):
+    """Return a patch context for get_url."""
+    return patch("alexa_proactive.config_flow.get_url", return_value=url)
+
+
+def _extract_form_errors(flow):
+    """Extract the errors dict from the last async_show_form call."""
+    return flow.async_show_form.call_args[1]["errors"]
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -133,7 +177,7 @@ class TestStepUser:
 
     @pytest.mark.asyncio
     async def test_shows_form_on_no_input(self, flow):
-        result = await flow.async_step_user(None)
+        await flow.async_step_user(None)
         flow.async_show_form.assert_called_once()
         call_kwargs = flow.async_show_form.call_args
         assert call_kwargs[1]["step_id"] == "user"
@@ -141,70 +185,36 @@ class TestStepUser:
     @pytest.mark.asyncio
     async def test_valid_credentials_proceeds_to_setup(self, flow, ha_error):
         flow.async_step_setup = AsyncMock(return_value={"type": "form", "step_id": "setup"})
-        with (
-            patch(
-                "alexa_proactive.config_flow.LWAClient",
-                autospec=True,
-            ) as mock_lwa_cls,
-        ):
+        with _patch_lwa() as mock_lwa_cls:
             mock_lwa = mock_lwa_cls.return_value
             mock_lwa.async_get_proactive_token = AsyncMock(return_value="token1")
             mock_lwa.async_get_smapi_token = AsyncMock(return_value="token2")
 
-            user_input = {
-                "client_id": "test_id",
-                "client_secret": "test_secret",
-                "region": "eu",
-            }
-            await flow.async_step_user(user_input)
+            await flow.async_step_user(_USER_INPUT)
 
         flow.async_set_unique_id.assert_called_once_with("test_id")
         flow._abort_if_unique_id_configured.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invalid_credentials_shows_error(self, flow, ha_error):
-        with (
-            patch(
-                "alexa_proactive.config_flow.LWAClient",
-                autospec=True,
-            ) as mock_lwa_cls,
-        ):
+        with _patch_lwa() as mock_lwa_cls:
             mock_lwa = mock_lwa_cls.return_value
             mock_lwa.async_get_proactive_token = AsyncMock(side_effect=ha_error("bad creds"))
 
-            user_input = {
-                "client_id": "test_id",
-                "client_secret": "test_secret",
-                "region": "eu",
-            }
-            await flow.async_step_user(user_input)
+            await flow.async_step_user(_USER_INPUT)
 
-        flow.async_show_form.assert_called_once()
-        call_kwargs = flow.async_show_form.call_args
-        assert call_kwargs[1]["errors"]["base"] == "invalid_auth"
+        assert _extract_form_errors(flow)["base"] == "invalid_auth"
 
     @pytest.mark.asyncio
     async def test_missing_smapi_scope_shows_error(self, flow, ha_error):
-        with (
-            patch(
-                "alexa_proactive.config_flow.LWAClient",
-                autospec=True,
-            ) as mock_lwa_cls,
-        ):
+        with _patch_lwa() as mock_lwa_cls:
             mock_lwa = mock_lwa_cls.return_value
             mock_lwa.async_get_proactive_token = AsyncMock(return_value="token1")
             mock_lwa.async_get_smapi_token = AsyncMock(side_effect=ha_error("scope"))
 
-            user_input = {
-                "client_id": "test_id",
-                "client_secret": "test_secret",
-                "region": "eu",
-            }
-            await flow.async_step_user(user_input)
+            await flow.async_step_user(_USER_INPUT)
 
-        flow.async_show_form.assert_called_once()
-        call_kwargs = flow.async_show_form.call_args
-        assert call_kwargs[1]["errors"]["base"] == "scope_missing"
+        assert _extract_form_errors(flow)["base"] == "scope_missing"
 
     @pytest.mark.asyncio
     async def test_schema_has_region_field(self, flow, config_flow_mod):
@@ -221,65 +231,35 @@ class TestStepSetup:
 
     @pytest.mark.asyncio
     async def test_setup_creates_skill_and_proceeds(self, flow, ha_error):
-        flow._client_id = "test_id"
-        flow._client_secret = "test_secret"
-        flow._region = "eu"
-
-        setup_result = {
-            "skill_id": "amzn1.ask.skill.123",
-            "vendor_id": "VENDOR123",
-            "webhook_url": "https://example.com/api/alexa_proactive",
-        }
+        _set_flow_credentials(flow)
 
         with (
-            patch(
-                "alexa_proactive.config_flow.get_url",
-                return_value="https://example.com",
-            ),
-            patch(
-                "alexa_proactive.config_flow.LWAClient",
-                autospec=True,
-            ),
-            patch(
-                "alexa_proactive.config_flow.SMTPClient",
-                autospec=True,
-            ) as mock_smapi_cls,
+            _patch_get_url(),
+            _patch_lwa(),
+            _patch_smapi() as mock_smapi_cls,
         ):
             mock_smapi = mock_smapi_cls.return_value
-            mock_smapi.async_setup_skill_complete = AsyncMock(return_value=setup_result)
+            mock_smapi.async_setup_skill_complete = AsyncMock(return_value=_SETUP_RESULT)
 
-            result = await flow.async_step_setup(None)
+            await flow.async_step_setup(None)
 
-        assert flow._setup_result == setup_result
+        assert flow._setup_result == _SETUP_RESULT
 
     @pytest.mark.asyncio
     async def test_setup_smapi_error_shows_error(self, flow, ha_error):
-        flow._client_id = "test_id"
-        flow._client_secret = "test_secret"
-        flow._region = "eu"
+        _set_flow_credentials(flow)
 
         with (
-            patch(
-                "alexa_proactive.config_flow.get_url",
-                return_value="https://example.com",
-            ),
-            patch(
-                "alexa_proactive.config_flow.LWAClient",
-                autospec=True,
-            ),
-            patch(
-                "alexa_proactive.config_flow.SMTPClient",
-                autospec=True,
-            ) as mock_smapi_cls,
+            _patch_get_url(),
+            _patch_lwa(),
+            _patch_smapi() as mock_smapi_cls,
         ):
             mock_smapi = mock_smapi_cls.return_value
             mock_smapi.async_setup_skill_complete = AsyncMock(side_effect=ha_error("SMAPI failed"))
 
-            result = await flow.async_step_setup(None)
+            await flow.async_step_setup(None)
 
-        flow.async_show_form.assert_called_once()
-        call_kwargs = flow.async_show_form.call_args
-        assert call_kwargs[1]["errors"]["base"] == "smapi_error"
+        assert _extract_form_errors(flow)["base"] == "smapi_error"
 
 
 # ---------------------------------------------------------------------------
@@ -291,27 +271,17 @@ class TestStepFinish:
 
     @pytest.mark.asyncio
     async def test_shows_form_when_no_input(self, flow):
-        flow._setup_result = {
-            "skill_id": "amzn1.ask.skill.123",
-            "vendor_id": "VENDOR123",
-            "webhook_url": "https://example.com/api/alexa_proactive",
-        }
-        result = await flow.async_step_finish(None)
+        flow._setup_result = _SETUP_RESULT
+        await flow.async_step_finish(None)
         flow.async_show_form.assert_called_once()
         assert flow.async_show_form.call_args[1]["step_id"] == "finish"
 
     @pytest.mark.asyncio
     async def test_finish_creates_entry(self, flow):
-        flow._client_id = "test_id"
-        flow._client_secret = "test_secret"
-        flow._region = "eu"
-        flow._setup_result = {
-            "skill_id": "amzn1.ask.skill.123",
-            "vendor_id": "VENDOR123",
-            "webhook_url": "https://example.com/api/alexa_proactive",
-        }
+        _set_flow_credentials(flow)
+        flow._setup_result = _SETUP_RESULT
 
-        result = await flow.async_step_finish({"confirm": True})
+        await flow.async_step_finish({"confirm": True})
 
         flow.async_create_entry.assert_called_once()
         call_kwargs = flow.async_create_entry.call_args
@@ -334,23 +304,12 @@ class TestWebhookUrl:
 
     @pytest.mark.asyncio
     async def test_webhook_url_uses_external_url(self, flow, ha_error):
-        flow._client_id = "test_id"
-        flow._client_secret = "test_secret"
-        flow._region = "eu"
+        _set_flow_credentials(flow)
 
         with (
-            patch(
-                "alexa_proactive.config_flow.get_url",
-                return_value="https://my-ha.duckdns.org:8123",
-            ),
-            patch(
-                "alexa_proactive.config_flow.LWAClient",
-                autospec=True,
-            ),
-            patch(
-                "alexa_proactive.config_flow.SMTPClient",
-                autospec=True,
-            ) as mock_smapi_cls,
+            _patch_get_url("https://my-ha.duckdns.org:8123"),
+            _patch_lwa(),
+            _patch_smapi() as mock_smapi_cls,
         ):
             mock_smapi = mock_smapi_cls.return_value
             mock_smapi.async_setup_skill_complete = AsyncMock(

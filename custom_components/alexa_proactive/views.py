@@ -1,0 +1,112 @@
+"""Custom HTTP view acting as the Alexa skill endpoint."""
+from __future__ import annotations
+
+import logging
+
+from aiohttp import web
+from homeassistant.components.http import HomeAssistantView
+from homeassistant.core import HomeAssistant
+
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _speech_response(text: str, *, end_session: bool = True, reprompt: str | None = None) -> dict:
+    response: dict = {
+        "outputSpeech": {"type": "PlainText", "text": text},
+        "shouldEndSession": end_session,
+    }
+    if reprompt:
+        response["reprompt"] = {"outputSpeech": {"type": "PlainText", "text": reprompt}}
+    return {"version": "1.0", "response": response, "sessionAttributes": {}}
+
+
+_EMPTY_RESPONSE = {"version": "1.0", "response": {}}
+
+
+class AlexaProactiveView(HomeAssistantView):
+    url = "/api/alexa_proactive"
+    name = "api:alexa_proactive"
+    requires_auth = False
+    cors_allowed = False
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            event = await request.json()
+        except Exception:
+            return self.json(_speech_response("Sorry, something went wrong."))
+
+        req = event.get("request", {})
+        request_type = req.get("type", "")
+        intent = req.get("intent") or {}
+        intent_name = intent.get("name", "")
+
+        user_id = ""
+        session = event.get("session") or {}
+        if session.get("user"):
+            user_id = session["user"].get("userId", "")
+
+        _LOGGER.debug("%s%s", request_type, f" / {intent_name}" if intent_name else "")
+
+        if user_id:
+            _LOGGER.debug("  userId: %s", user_id)
+
+        handler = {
+            "LaunchRequest": self._handle_launch,
+            "IntentRequest": self._handle_intent,
+            "SessionEndedRequest": lambda r, u: _EMPTY_RESPONSE,
+            "System.ExceptionEncountered": self._handle_exception,
+            "AlexaSkillEvent.SkillProactiveSubscriptionChanged": self._handle_subscription_changed,
+        }.get(request_type)
+
+        if handler is None:
+            _LOGGER.warning("Unknown request type: %s", request_type)
+            return self.json(_speech_response("Say send notification or check status.", end_session=False, reprompt="What would you like to do?"))
+
+        result = handler(req, user_id)
+        if user_id and request_type == "LaunchRequest":
+            self._store_user_id(user_id)
+
+        return self.json(result)
+
+    def _handle_launch(self, request: dict, user_id: str) -> dict:
+        return _speech_response("Welcome to Ping Me! You are set up for proactive notifications.")
+
+    def _handle_intent(self, request: dict, user_id: str) -> dict:
+        intent_name = (request.get("intent") or {}).get("name", "")
+
+        if intent_name == "SendNotificationIntent":
+            return _speech_response("Your user ID has been captured. Use the notification script to send a proactive alert.")
+
+        if intent_name == "CheckStatusIntent":
+            return _speech_response("Your skill is active. Enable notifications in the Alexa app to receive proactive alerts.")
+
+        if intent_name in ("AMAZON.HelpIntent",):
+            return _speech_response("Say send notification or check status.", end_session=False, reprompt="What would you like to do?")
+
+        if intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent"):
+            return _speech_response("", end_session=True)
+
+        return _speech_response("Say send notification or check status.", end_session=False, reprompt="What would you like to do?")
+
+    def _handle_exception(self, request: dict, user_id: str) -> dict:
+        cause = request.get("cause", {})
+        _LOGGER.error("Alexa exception: %s", cause.get("message", "unknown"))
+        return _EMPTY_RESPONSE
+
+    def _handle_subscription_changed(self, request: dict, user_id: str) -> dict:
+        body = request.get("body", {})
+        subscriptions = body.get("subscriptions", [])
+        _LOGGER.info("Proactive subscription changed: %s", subscriptions)
+        return _EMPTY_RESPONSE
+
+    def _store_user_id(self, user_id: str) -> None:
+        entries = self._hass.data.get(DOMAIN)
+        if not entries:
+            return
+        for entry_data in entries.values():
+            entry_data["alexa_user_id"] = user_id
