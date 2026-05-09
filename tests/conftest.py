@@ -8,6 +8,7 @@ import pytest
 # Single shared HomeAssistantError so all tests and loaded modules
 # reference the same class, regardless of collection order.
 _HomeAssistantError = type("HomeAssistantError", (Exception,), {})
+_ServiceValidationError = type("ServiceValidationError", (_HomeAssistantError,), {})
 
 # ---------------------------------------------------------------------------
 # Mock homeassistant before any component modules are imported.
@@ -23,6 +24,7 @@ if _exc_mod is None:
     _exc_mod = MagicMock()
     sys.modules["homeassistant.exceptions"] = _exc_mod
 _exc_mod.HomeAssistantError = _HomeAssistantError
+_exc_mod.ServiceValidationError = _ServiceValidationError
 
 sys.modules.setdefault("homeassistant.helpers", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.aiohttp_client", MagicMock())
