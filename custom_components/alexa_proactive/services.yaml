@@ -1,0 +1,23 @@
+send:
+  name: Send proactive notification
+  description: Send a proactive notification (yellow ring) to Alexa devices
+  fields:
+    sender:
+      name: Sender name
+      description: Name shown in the notification ("You have N messages from [sender]")
+      required: false
+      example: "Home Assistant"
+      default: "Home Assistant"
+      selector:
+        text:
+    count:
+      name: Message count
+      description: Number of unread messages to display
+      required: false
+      example: 1
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box

@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Alexa Proactive Events",
+        "description": "Enter your Amazon Developer LWA credentials",
+        "data": {
+          "client_id": "LWA Client ID",
+          "client_secret": "LWA Client Secret",
+          "region": "Alexa API Region"
+        }
+      },
+      "setup": {
+        "title": "Creating Alexa skill...",
+        "description": "Setting up your proactive events skill via SMAPI"
+      },
+      "finish": {
+        "title": "Setup complete!",
+        "description": "Your Alexa Proactive Events integration is ready. Use the `alexa_proactive.send` service in automations to send notifications."
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid LWA credentials",
+      "cannot_connect": "Cannot connect to Amazon API",
+      "smapi_error": "SMAPI skill creation failed",
+      "scope_missing": "Required OAuth scope not granted"
+    },
+    "abort": {
+      "already_configured": "This integration is already configured"
+    }
+  }
+}
