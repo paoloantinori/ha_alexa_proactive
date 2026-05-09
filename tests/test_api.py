@@ -8,19 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Mock homeassistant before importing api (HA is not installed).
-# ---------------------------------------------------------------------------
-_ha_pkg = MagicMock()
-sys.modules["homeassistant"] = _ha_pkg
-sys.modules["homeassistant.core"] = MagicMock()
-sys.modules["homeassistant.exceptions"] = MagicMock()
-sys.modules["homeassistant.helpers"] = MagicMock()
-sys.modules["homeassistant.helpers.aiohttp_client"] = MagicMock()
-
-_HomeAssistantError = type("HomeAssistantError", (Exception,), {})
-sys.modules["homeassistant.exceptions"].HomeAssistantError = _HomeAssistantError
-
 COMPONENT_DIR = Path(__file__).resolve().parent.parent / "custom_components" / "alexa_proactive"
 
 
@@ -84,12 +71,12 @@ def _make_mock_response(json_data, status=200):
 
 
 def _make_mock_session(mock_response):
-    """Build a mock aiohttp ClientSession whose .post() returns *mock_response*."""
-    mock_post = AsyncMock(return_value=mock_response)
-    mock_post.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_post.__aexit__ = AsyncMock(return_value=False)
-    session = AsyncMock()
-    session.post = MagicMock(return_value=mock_post)
+    """Build a mock aiohttp ClientSession whose .post() returns an async context manager."""
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=mock_response)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    session = MagicMock()
+    session.post = MagicMock(return_value=ctx)
     session.closed = False
     return session
 
@@ -174,19 +161,19 @@ class TestRequestToken:
         assert result["token_type"] == "bearer"
 
     @pytest.mark.asyncio
-    async def test_request_token_invalid_credentials(self, client, const):
+    async def test_request_token_invalid_credentials(self, client, const, ha_error):
         mock_session = _make_mock_session(
             _make_mock_response({"error": "invalid_client"}, status=401)
         )
 
         with (
             patch.object(client, "_session", mock_session),
-            pytest.raises(_HomeAssistantError, match="Invalid LWA credentials"),
+            pytest.raises(ha_error, match="Invalid LWA credentials"),
         ):
             await client._async_request_token(const.SCOPE_PROACTIVE)
 
     @pytest.mark.asyncio
-    async def test_request_token_network_error(self, client, const):
+    async def test_request_token_network_error(self, client, const, ha_error):
         import aiohttp
 
         mock_session = AsyncMock()
@@ -195,19 +182,19 @@ class TestRequestToken:
 
         with (
             patch.object(client, "_session", mock_session),
-            pytest.raises(_HomeAssistantError, match="Cannot connect to Amazon LWA"),
+            pytest.raises(ha_error, match="Cannot connect to Amazon LWA"),
         ):
             await client._async_request_token(const.SCOPE_PROACTIVE)
 
     @pytest.mark.asyncio
-    async def test_request_token_missing_access_token(self, client, const):
+    async def test_request_token_missing_access_token(self, client, const, ha_error):
         mock_session = _make_mock_session(
             _make_mock_response({"error": "unauthorized_client"})
         )
 
         with (
             patch.object(client, "_session", mock_session),
-            pytest.raises(_HomeAssistantError, match="Missing required scope"),
+            pytest.raises(ha_error, match="Missing required scope"),
         ):
             await client._async_request_token(const.SCOPE_PROACTIVE)
 
