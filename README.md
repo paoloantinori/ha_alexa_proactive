@@ -4,7 +4,7 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 ## How It Works
 
-1. **Config Flow**: Enter your Amazon Developer LWA credentials. The integration automatically creates an Alexa skill via SMAPI with the correct interaction model and proactive events subscription.
+1. **Config Flow**: Enter your Amazon Developer LWA credentials, authorize via Amazon login, and the integration automatically creates an Alexa skill via SMAPI with interaction models for your selected locales.
 
 2. **Skill Endpoint**: A custom HTTP view acts as the Alexa skill endpoint, handling Launch, Intent, and SessionEnded requests.
 
@@ -13,11 +13,11 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 ## Prerequisites
 
 - **Amazon Developer Account**: Create one at [developer.amazon.com](https://developer.amazon.com)
-- **LWA Security Profile**: Create a Security Profile in the Amazon Developer Console with:
+- **LWA Security Profile**: Create one at the [Security Profiles console](https://developer.amazon.com/settings/console/securityprofile/overview.html) ([docs](https://developer.amazon.com/docs/login-with-amazon/security-profile.html)):
   - **Client ID** and **Client Secret** from the Web Settings tab
-  - The profile must be granted two OAuth scopes:
-    - `alexa::proactive_events` — for sending notifications at runtime
-    - `alexa::ask:skills:readwrite` — for automatic skill creation during setup
+  - **Allowed Return URLs**: Add your HA external URL followed by `/auth/alexa_proactive/callback` (e.g. `https://my-ha.duckdns.org:8123/auth/alexa_proactive/callback`)
+  - The profile must be granted the OAuth scope:
+    - `alexa::ask:skills:readwrite alexa::ask:models:readwrite` — for skill creation and model management during setup
 - **Home Assistant External URL**: Must be configured (`Settings > System > Network`) so Alexa can reach the skill endpoint. This typically requires a Nabu Casa subscription, a reverse proxy, or another tunneling solution.
 
 ## Installation
@@ -38,9 +38,10 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 1. Go to **Settings > Devices & Services**
 2. Click **Add Integration** and search for "Alexa Proactive Events"
-3. **Step 1 — Credentials**: Enter your LWA Client ID, Client Secret, and select your Alexa API region (EU, NA, or FE)
-4. **Step 2 — Skill Setup**: The integration validates your credentials and automatically creates the Alexa skill via SMAPI
-5. **Step 3 — Activate**: On your Alexa app, enable the skill. Say "Alexa, open ping me" to link your account.
+3. **Step 1 — Credentials**: Enter your LWA Client ID, Client Secret, select your Alexa API region (EU, NA, or FE), optionally customize the invocation name and select locales (auto-detected from your HA country/language settings)
+4. **Step 2 — Authorize**: Click the authorization link, sign in with your Amazon Developer account, and approve. Return to HA and submit.
+5. **Step 3 — Skill Setup**: The integration automatically creates the Alexa skill via SMAPI and uploads interaction models for all selected locales
+6. **Step 4 — Activate**: On your Alexa app, enable the skill. Say "Alexa, open [invocation name]" to link your account.
 
 ## Usage
 
@@ -113,38 +114,41 @@ automation:
 **"Integration not configured" error when calling the service**
 - Ensure the config entry is in "Loaded" state (Settings > Devices & Services)
 
-**"Invalid LWA credentials" during setup**
+**"Invalid LWA credentials" / "Authorization failed" during setup**
 - Verify your Client ID and Client Secret are correct
-- Check that your LWA Security Profile has both required OAuth scopes
+- Check that your LWA Security Profile has the `alexa::ask:skills:readwrite alexa::ask:models:readwrite` scope
+- Ensure your **Allowed Return URL** in the LWA console matches `https://<your-ha-url>/auth/alexa_proactive/callback`
+
+**"Authorization pending" does not resolve**
+- Make sure your HA external URL is reachable from your browser
+- Check that the callback URL is registered in the LWA Security Profile's Web Settings
 
 **"SMAPI skill creation failed"**
-- Confirm your LWA profile has the `alexa::ask:skills:readwrite` scope
+- Confirm your Amazon Developer account has vendor access ([Alexa Developer Console](https://developer.amazon.com/alexa/console/ask))
 - Check the Home Assistant logs for the specific SMAPI error
 
 **Alexa doesn't show the yellow ring**
 - Ensure you've enabled the skill in the Alexa app
-- Say "Alexa, open ping me" to trigger user ID capture
+- Say "Alexa, open [invocation name]" to trigger user ID capture
 - Verify your HA external URL is reachable from the internet
-
-**"Scope missing" error**
-- Your LWA Security Profile was not granted the required OAuth scope
-- Re-create the profile with both `alexa::proactive_events` and `alexa::ask:skills:readwrite`
 
 ## Architecture
 
 ```
 custom_components/alexa_proactive/
 ├── __init__.py        # Service wiring, config entry lifecycle
-├── api.py             # LWA OAuth2 client with token caching
-├── config_flow.py     # 3-step setup flow (credentials → SMAPI → finish)
-├── const.py           # Constants (URLs, scopes, defaults)
+├── api.py             # LWA OAuth2 client (auth code + client_credentials)
+├── config_flow.py     # 4-step setup flow (credentials → authorize → SMAPI → finish)
+├── const.py           # Constants (URLs, scopes, locale maps)
 ├── manifest.json      # HA integration metadata
-├── models.py          # Alexa interaction models (en-US, it-IT)
+├── models.py          # Alexa interaction models (17 locales)
 ├── proactive.py       # Proactive Events API client
 ├── services.yaml      # Service definition for HA UI
 ├── smapi.py           # SMAPI client for skill CRUD
 ├── strings.json       # Config flow UI strings
-└── views.py           # Alexa skill HTTP endpoint
+├── translations/
+│   └── en.json        # English translations
+└── views.py           # Alexa skill endpoint + OAuth callback
 ```
 
 ## License
