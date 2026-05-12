@@ -67,6 +67,9 @@ class TestSupportedLocales:
     def test_contains_it_it(self, models):
         assert "it-IT" in models.SUPPORTED_LOCALES
 
+    def test_has_17_locales(self, models):
+        assert len(models.SUPPORTED_LOCALES) == 17
+
 
 # ---------------------------------------------------------------------------
 # Test: MODELS dict
@@ -75,13 +78,23 @@ class TestSupportedLocales:
 
 class TestModelsDict:
 
-    def test_has_both_locales(self, models):
-        assert set(models.MODELS.keys()) == {"en-US", "it-IT"}
+    def test_has_all_supported_locales(self, models):
+        assert set(models.MODELS.keys()) == set(models.SUPPORTED_LOCALES)
 
     def test_values_are_dicts(self, models):
         for locale_model in models.MODELS.values():
             assert isinstance(locale_model, dict)
             assert "interactionModel" in locale_model
+
+    def test_all_locales_have_send_and_check_intents(self, models):
+        for locale, model in models.MODELS.items():
+            names = _intent_names(model)
+            assert "SendNotificationIntent" in names, f"{locale} missing SendNotificationIntent"
+            assert "CheckStatusIntent" in names, f"{locale} missing CheckStatusIntent"
+            send = next(i for i in model["interactionModel"]["languageModel"]["intents"] if i["name"] == "SendNotificationIntent")
+            check = next(i for i in model["interactionModel"]["languageModel"]["intents"] if i["name"] == "CheckStatusIntent")
+            assert len(send["samples"]) > 0, f"{locale} has empty send samples"
+            assert len(check["samples"]) > 0, f"{locale} has empty check samples"
 
 
 # ---------------------------------------------------------------------------
@@ -155,12 +168,27 @@ class TestItITModel:
 
 class TestGetModel:
 
-    def test_returns_en_us(self, models, en_us):
-        assert models.get_model("en-US") is en_us
+    def test_returns_en_us_with_default_invocation(self, models, en_us):
+        result = models.get_model("en-US")
+        assert result["interactionModel"]["languageModel"]["invocationName"] == "ping me"
 
-    def test_returns_it_it(self, models, it_it):
-        assert models.get_model("it-IT") is it_it
+    def test_returns_it_it_with_default_invocation(self, models, it_it):
+        result = models.get_model("it-IT")
+        assert result["interactionModel"]["languageModel"]["invocationName"] == "ping me"
+
+    def test_custom_invocation_name_en_us(self, models):
+        result = models.get_model("en-US", invocation_name="notify me")
+        assert result["interactionModel"]["languageModel"]["invocationName"] == "notify me"
+
+    def test_custom_invocation_name_it_it(self, models):
+        result = models.get_model("it-IT", invocation_name="avvisami")
+        assert result["interactionModel"]["languageModel"]["invocationName"] == "avvisami"
+
+    def test_does_not_mutate_template(self, models):
+        original = models.MODELS["en-US"]["interactionModel"]["languageModel"]["invocationName"]
+        models.get_model("en-US", invocation_name="custom name")
+        assert models.MODELS["en-US"]["interactionModel"]["languageModel"]["invocationName"] == original
 
     def test_raises_on_unknown_locale(self, models):
         with pytest.raises(KeyError):
-            models.get_model("fr-FR")
+            models.get_model("xx-XX")

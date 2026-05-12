@@ -170,63 +170,63 @@ class TestCreateSkill:
 
     @pytest.mark.asyncio
     async def test_creates_skill_and_returns_id(self, smtp_client, const):
-        vendor_resp = _make_mock_response({"vendors": [{"id": "VENDOR123"}]})
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
-        session = _make_multi_response_session(vendor_resp, skill_resp)
+        session = _make_mock_session(skill_resp)
 
         with patch.object(smtp_client, "_session", session):
-            result = await smtp_client.async_create_skill(
-                webhook_url="https://example.com/webhook"
+            result = await smtp_client._async_create_skill(
+                vendor_id="VENDOR123",
+                webhook_url="https://example.com/webhook",
+                skill_name="Home Assistant",
             )
 
         assert result == "amzn1.ask.skill.123"
-        assert session.request.call_count == 2
-        assert session.request.call_args_list[1][0][0] == "POST"
-        assert session.request.call_args_list[1][0][1] == f"{const.SMAPI_BASE_URL}/v1/skills"
+        assert session.request.call_args[0][0] == "POST"
+        assert session.request.call_args[0][1] == f"{const.SMAPI_BASE_URL}/v1/skills"
 
     @pytest.mark.asyncio
     async def test_manifest_contains_webhook_url(self, smtp_client):
-        vendor_resp = _make_mock_response({"vendors": [{"id": "VENDOR123"}]})
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
-        session = _make_multi_response_session(vendor_resp, skill_resp)
+        session = _make_mock_session(skill_resp)
 
         with patch.object(smtp_client, "_session", session):
-            await smtp_client.async_create_skill(
-                webhook_url="https://example.com/webhook"
+            await smtp_client._async_create_skill(
+                vendor_id="VENDOR123",
+                webhook_url="https://example.com/webhook",
+                skill_name="Home Assistant",
             )
 
-        post_call = session.request.call_args_list[1]
-        body = post_call[1].get("json") or post_call.kwargs.get("json")
+        body = session.request.call_args[1].get("json") or session.request.call_args.kwargs.get("json")
         assert "https://example.com/webhook" in str(body)
 
     @pytest.mark.asyncio
     async def test_manifest_contains_notification_permission(self, smtp_client):
-        vendor_resp = _make_mock_response({"vendors": [{"id": "VENDOR123"}]})
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
-        session = _make_multi_response_session(vendor_resp, skill_resp)
+        session = _make_mock_session(skill_resp)
 
         with patch.object(smtp_client, "_session", session):
-            await smtp_client.async_create_skill(
-                webhook_url="https://example.com/webhook"
+            await smtp_client._async_create_skill(
+                vendor_id="VENDOR123",
+                webhook_url="https://example.com/webhook",
+                skill_name="Home Assistant",
             )
 
-        post_call = session.request.call_args_list[1]
-        body = post_call[1].get("json") or post_call.kwargs.get("json")
+        body = session.request.call_args[1].get("json") or session.request.call_args.kwargs.get("json")
         assert "alexa::devices:all:notifications:write" in str(body)
 
     @pytest.mark.asyncio
     async def test_manifest_contains_proactive_events(self, smtp_client, const):
-        vendor_resp = _make_mock_response({"vendors": [{"id": "VENDOR123"}]})
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
-        session = _make_multi_response_session(vendor_resp, skill_resp)
+        session = _make_mock_session(skill_resp)
 
         with patch.object(smtp_client, "_session", session):
-            await smtp_client.async_create_skill(
-                webhook_url="https://example.com/webhook"
+            await smtp_client._async_create_skill(
+                vendor_id="VENDOR123",
+                webhook_url="https://example.com/webhook",
+                skill_name="Home Assistant",
             )
 
-        post_call = session.request.call_args_list[1]
-        body = post_call[1].get("json") or post_call.kwargs.get("json")
+        body = session.request.call_args[1].get("json") or session.request.call_args.kwargs.get("json")
         body_str = str(body)
         assert const.EVENT_SCHEMA in body_str
         assert "SKILL_PROACTIVE_SUBSCRIPTION_CHANGED" in body_str
@@ -350,7 +350,11 @@ class TestSetupSkillComplete:
                 new_callable=AsyncMock, return_value=vendor_id,
             ) as mock_vendor,
             patch.object(
-                smtp_client, "async_create_skill",
+                smtp_client, "_async_find_existing_skill",
+                new_callable=AsyncMock, return_value=None,
+            ) as mock_find,
+            patch.object(
+                smtp_client, "_async_create_skill",
                 new_callable=AsyncMock, return_value=skill_id,
             ) as mock_create,
             patch.object(
@@ -361,13 +365,18 @@ class TestSetupSkillComplete:
                 smtp_client, "async_enable_skill",
                 new_callable=AsyncMock,
             ) as mock_enable,
+            patch.object(
+                smtp_client, "_async_request",
+                new_callable=AsyncMock, return_value=None,
+            ),
         ):
             result = await smtp_client.async_setup_skill_complete(
                 webhook_url=webhook_url, models=models,
             )
 
         mock_vendor.assert_called_once()
-        mock_create.assert_called_once_with(webhook_url, "Home Assistant")
+        mock_find.assert_called_once_with(vendor_id, "Home Assistant")
+        mock_create.assert_called_once_with(vendor_id, webhook_url, "Home Assistant")
         mock_upload.assert_called_once()
         mock_enable.assert_called_once_with(skill_id)
 
@@ -393,7 +402,11 @@ class TestSetupSkillComplete:
                 new_callable=AsyncMock, return_value=vendor_id,
             ),
             patch.object(
-                smtp_client, "async_create_skill",
+                smtp_client, "_async_find_existing_skill",
+                new_callable=AsyncMock, return_value=None,
+            ),
+            patch.object(
+                smtp_client, "_async_create_skill",
                 new_callable=AsyncMock, side_effect=conflict_error,
             ) as mock_create,
             patch.object(
@@ -408,13 +421,17 @@ class TestSetupSkillComplete:
                 smtp_client, "async_enable_skill",
                 new_callable=AsyncMock,
             ),
+            patch.object(
+                smtp_client, "_async_request",
+                new_callable=AsyncMock, return_value=None,
+            ),
         ):
             result = await smtp_client.async_setup_skill_complete(
                 webhook_url=webhook_url, models=models,
             )
 
         mock_create.assert_called_once()
-        mock_resolve.assert_called_once_with(webhook_url, "Home Assistant")
+        mock_resolve.assert_called_once_with(vendor_id, webhook_url, "Home Assistant")
 
 
 # ---------------------------------------------------------------------------

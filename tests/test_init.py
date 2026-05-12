@@ -60,6 +60,7 @@ def _make_hass():
         "skill_id": "skill123",
         "vendor_id": "vendor123",
         "alexa_user_id": "amzn1.ask.user.test",
+        "refresh_token": "Atzr|test_refresh",
     }
     entry.runtime_data = None
 

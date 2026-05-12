@@ -7,7 +7,7 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_ALEXA_USER_ID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,5 +108,44 @@ class AlexaProactiveView(HomeAssistantView):
         entries = self._hass.data.get(DOMAIN)
         if not entries:
             return
-        for entry_data in entries.values():
-            entry_data["alexa_user_id"] = user_id
+        for key, entry_data in entries.items():
+            if isinstance(entry_data, dict) and key not in ("auth_codes", "_callback_registered"):
+                entry_data[CONF_ALEXA_USER_ID] = user_id
+
+
+class AlexaAuthCallbackView(HomeAssistantView):
+    """Receives the OAuth2 redirect from Amazon after user authorizes."""
+
+    url = "/auth/alexa_proactive/callback"
+    name = "auth:alexa_proactive:callback"
+    requires_auth = False
+    cors_allowed = False
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    async def get(self, request: web.Request) -> web.Response:
+        code = request.query.get("code")
+        state = request.query.get("state")
+        error = request.query.get("error")
+
+        if error:
+            _LOGGER.error("LWA auth error: %s", request.query.get("error_description", error))
+            return web.Response(
+                text="<html><body><h2>Authorization failed</h2><p>Please try again.</p></body></html>",
+                content_type="text/html",
+                status=400,
+            )
+
+        if not code or not state:
+            return web.Response(text="Missing parameters.", content_type="text/html", status=400)
+
+        self._hass.data.setdefault(DOMAIN, {}).setdefault("auth_codes", {})[state] = code
+        all_codes = self._hass.data.get(DOMAIN, {}).get("auth_codes", {})
+        _LOGGER.info("LWA auth code received: state=%s, all_keys=%s", state, list(all_codes.keys()))
+
+        return web.Response(
+            text="<html><body><h2>Authorization successful!</h2>"
+            "<p>You can close this tab and return to Home Assistant to complete setup.</p></body></html>",
+            content_type="text/html",
+        )

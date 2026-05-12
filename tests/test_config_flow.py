@@ -61,7 +61,6 @@ def _load_config_flow():
     _load_models()
     _load_api()
     _load_smapi()
-    # Force reload to pick up conftest's _FakeConfigFlow base class
     mod_name = "alexa_proactive.config_flow"
     if mod_name in sys.modules:
         del sys.modules[mod_name]
@@ -69,28 +68,25 @@ def _load_config_flow():
 
 
 # ---------------------------------------------------------------------------
-# Mock HA infrastructure for config flow tests
+# Mock HA infrastructure
 # ---------------------------------------------------------------------------
 
 
 def _make_hass():
-    """Create a minimal mock hass for config flow tests."""
     hass = MagicMock()
-
-    # config_entries.flow support
     flow_mgr = MagicMock()
     hass.config_entries = MagicMock()
     hass.config_entries.flow = flow_mgr
     hass.config_entries.async_entries = MagicMock(return_value=[])
-
+    hass.data = {}
     return hass
 
 
 def _make_flow(hass, ha_error):
-    """Create a config flow instance bound to mock hass."""
     config_flow_mod = _load_config_flow()
     flow = config_flow_mod.AlexaProactiveConfigFlow()
     flow.hass = hass
+    flow.flow_id = "test_flow_id_123"
     flow._async_abort_entries_match = MagicMock()
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_unique_id_configured = MagicMock()
@@ -100,13 +96,21 @@ def _make_flow(hass, ha_error):
 
 
 # ---------------------------------------------------------------------------
-# Shared test data and helpers
+# Shared test data
 # ---------------------------------------------------------------------------
 
 _USER_INPUT = {
     "client_id": "test_id",
     "client_secret": "test_secret",
     "region": "eu",
+    "invocation_name": "ping me",
+}
+
+_TOKEN_RESULT = {
+    "access_token": "Atza|test_access",
+    "refresh_token": "Atzr|test_refresh",
+    "expires_in": 3600,
+    "token_type": "bearer",
 }
 
 _SETUP_RESULT = {
@@ -117,30 +121,36 @@ _SETUP_RESULT = {
 
 
 def _set_flow_credentials(flow):
-    """Set the credential attributes that tests need on a flow instance."""
     flow._client_id = _USER_INPUT["client_id"]
     flow._client_secret = _USER_INPUT["client_secret"]
     flow._region = _USER_INPUT["region"]
+    flow._invocation_name = _USER_INPUT["invocation_name"]
 
 
 def _patch_lwa(autospec=True):
-    """Return a patch context for LWAClient."""
     return patch("alexa_proactive.config_flow.LWAClient", autospec=autospec)
 
 
 def _patch_smapi():
-    """Return a patch context for SMTPClient."""
     return patch("alexa_proactive.config_flow.SMTPClient", autospec=True)
 
 
 def _patch_get_url(url="https://example.com"):
-    """Return a patch context for get_url."""
-    return patch("alexa_proactive.config_flow.get_url", return_value=url)
+    return patch("homeassistant.helpers.network.get_url", return_value=url)
 
 
 def _extract_form_errors(flow):
-    """Extract the errors dict from the last async_show_form call."""
     return flow.async_show_form.call_args[1]["errors"]
+
+
+def _extract_placeholders(flow):
+    return flow.async_show_form.call_args[1].get("description_placeholders", {})
+
+
+def _store_auth_code(hass, flow_id, suffix, code):
+    """Simulate the callback view storing an auth code."""
+    const = _load_const()
+    hass.data.setdefault(const.DOMAIN, {}).setdefault("auth_codes", {})[f"{flow_id}_{suffix}"] = code
 
 
 # ---------------------------------------------------------------------------
@@ -183,43 +193,108 @@ class TestStepUser:
         assert call_kwargs[1]["step_id"] == "user"
 
     @pytest.mark.asyncio
-    async def test_valid_credentials_proceeds_to_setup(self, flow, ha_error):
-        flow.async_step_setup = AsyncMock(return_value={"type": "form", "step_id": "setup"})
-        with _patch_lwa() as mock_lwa_cls:
-            mock_lwa = mock_lwa_cls.return_value
-            mock_lwa.async_get_proactive_token = AsyncMock(return_value="token1")
-            mock_lwa.async_get_smapi_token = AsyncMock(return_value="token2")
+    async def test_valid_input_proceeds_to_auth_smapi(self, flow, ha_error):
+        flow.async_step_auth_smapi = AsyncMock(return_value={"type": "form", "step_id": "auth_smapi"})
 
-            await flow.async_step_user(_USER_INPUT)
+        await flow.async_step_user(_USER_INPUT)
 
         flow.async_set_unique_id.assert_called_once_with("test_id")
         flow._abort_if_unique_id_configured.assert_called_once()
+        flow.async_step_auth_smapi.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_invalid_credentials_shows_error(self, flow, ha_error):
-        with _patch_lwa() as mock_lwa_cls:
-            mock_lwa = mock_lwa_cls.return_value
-            mock_lwa.async_get_proactive_token = AsyncMock(side_effect=ha_error("bad creds"))
+    async def test_schema_has_region_field(self, flow):
+        await flow.async_step_user(None)
+        schema = flow.async_show_form.call_args[1]["data_schema"]
+        assert "region" in schema.schema
 
-            await flow.async_step_user(_USER_INPUT)
+    @pytest.mark.asyncio
+    async def test_schema_has_invocation_name_field(self, flow):
+        await flow.async_step_user(None)
+        schema = flow.async_show_form.call_args[1]["data_schema"]
+        assert "invocation_name" in schema.schema
+
+    @pytest.mark.asyncio
+    async def test_schema_has_locales_field(self, flow):
+        await flow.async_step_user(None)
+        schema = flow.async_show_form.call_args[1]["data_schema"]
+        assert "locales" in schema.schema
+
+
+# ---------------------------------------------------------------------------
+# Test: async_step_auth_smapi
+# ---------------------------------------------------------------------------
+
+
+class TestStepAuthSmapi:
+
+    @pytest.mark.asyncio
+    async def test_shows_auth_url_on_first_call(self, flow):
+        _set_flow_credentials(flow)
+        mock_lwa = MagicMock()
+        mock_lwa.get_authorization_url = MagicMock(
+            return_value="https://www.amazon.com/ap/oa?client_id=test_id"
+        )
+        flow._lwa_client = mock_lwa
+
+        with _patch_get_url("https://my-ha.example.com"):
+            await flow.async_step_auth_smapi(None)
+
+        placeholders = _extract_placeholders(flow)
+        assert "auth_url" in placeholders
+        assert "amazon.com" in placeholders["auth_url"]
+
+    @pytest.mark.asyncio
+    async def test_code_exchange_proceeds_to_setup(self, flow, hass):
+        _set_flow_credentials(flow)
+        flow.async_step_setup = AsyncMock(return_value={"type": "form", "step_id": "setup"})
+
+        mock_lwa = MagicMock()
+        mock_lwa.async_exchange_code = AsyncMock(return_value=_TOKEN_RESULT)
+        flow._lwa_client = mock_lwa
+
+        _store_auth_code(hass, flow.flow_id, "smapi", "test_smapi_code")
+
+        with _patch_get_url():
+            await flow.async_step_auth_smapi({"submit": True})
+
+        mock_lwa.async_exchange_code.assert_called_once()
+        flow.async_step_setup.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_code_shows_pending_error(self, flow):
+        _set_flow_credentials(flow)
+        mock_lwa = MagicMock()
+        mock_lwa.get_authorization_url = MagicMock(return_value="https://www.amazon.com/ap/oa?...")
+        flow._lwa_client = mock_lwa
+
+        with _patch_get_url():
+            await flow.async_step_auth_smapi({"submit": True})
+
+        assert _extract_form_errors(flow)["base"] == "authorization_pending"
+
+    @pytest.mark.asyncio
+    async def test_invalid_code_shows_error(self, flow, hass, ha_error):
+        _set_flow_credentials(flow)
+        _store_auth_code(hass, flow.flow_id, "smapi", "bad_code")
+
+        mock_lwa = MagicMock()
+        mock_lwa.async_exchange_code = AsyncMock(
+            side_effect=ha_error("LWA error: invalid_grant")
+        )
+        mock_lwa.get_authorization_url = MagicMock(return_value="https://www.amazon.com/ap/oa?...")
+        flow._lwa_client = mock_lwa
+
+        with _patch_get_url():
+            await flow.async_step_auth_smapi({"submit": True})
 
         assert _extract_form_errors(flow)["base"] == "invalid_auth"
 
     @pytest.mark.asyncio
-    async def test_missing_smapi_scope_shows_error(self, flow, ha_error):
-        with _patch_lwa() as mock_lwa_cls:
-            mock_lwa = mock_lwa_cls.return_value
-            mock_lwa.async_get_proactive_token = AsyncMock(return_value="token1")
-            mock_lwa.async_get_smapi_token = AsyncMock(side_effect=ha_error("scope"))
-
-            await flow.async_step_user(_USER_INPUT)
-
-        assert _extract_form_errors(flow)["base"] == "scope_missing"
-
-    @pytest.mark.asyncio
-    async def test_schema_has_region_field(self, flow, config_flow_mod):
-        schema = config_flow_mod._USER_SCHEMA
-        assert "region" in schema.schema
+    async def test_no_lwa_client_redirects_to_user(self, flow):
+        flow.async_step_user = AsyncMock(return_value={"type": "form", "step_id": "user"})
+        result = await flow.async_step_auth_smapi(None)
+        flow.async_step_user.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -230,12 +305,14 @@ class TestStepUser:
 class TestStepSetup:
 
     @pytest.mark.asyncio
-    async def test_setup_creates_skill_and_proceeds(self, flow, ha_error):
+    async def test_setup_creates_skill_and_proceeds(self, flow, hass):
         _set_flow_credentials(flow)
+
+        mock_lwa = MagicMock()
+        flow._lwa_client = mock_lwa
 
         with (
             _patch_get_url(),
-            _patch_lwa(),
             _patch_smapi() as mock_smapi_cls,
         ):
             mock_smapi = mock_smapi_cls.return_value
@@ -246,12 +323,14 @@ class TestStepSetup:
         assert flow._setup_result == _SETUP_RESULT
 
     @pytest.mark.asyncio
-    async def test_setup_smapi_error_shows_error(self, flow, ha_error):
+    async def test_setup_smapi_error_shows_error(self, flow, hass, ha_error):
         _set_flow_credentials(flow)
+
+        mock_lwa = MagicMock()
+        flow._lwa_client = mock_lwa
 
         with (
             _patch_get_url(),
-            _patch_lwa(),
             _patch_smapi() as mock_smapi_cls,
         ):
             mock_smapi = mock_smapi_cls.return_value
@@ -277,9 +356,13 @@ class TestStepFinish:
         assert flow.async_show_form.call_args[1]["step_id"] == "finish"
 
     @pytest.mark.asyncio
-    async def test_finish_creates_entry(self, flow):
+    async def test_finish_creates_entry(self, flow, const):
         _set_flow_credentials(flow)
         flow._setup_result = _SETUP_RESULT
+
+        mock_lwa = MagicMock()
+        mock_lwa.get_refresh_token = MagicMock(return_value="Atzr|smapi_refresh")
+        flow._lwa_client = mock_lwa
 
         await flow.async_step_finish({"confirm": True})
 
@@ -290,9 +373,11 @@ class TestStepFinish:
         assert data["client_id"] == "test_id"
         assert data["client_secret"] == "test_secret"
         assert data["region"] == "eu"
+        assert data["invocation_name"] == "ping me"
         assert data["skill_id"] == "amzn1.ask.skill.123"
         assert data["vendor_id"] == "VENDOR123"
         assert data["webhook_url"] == "https://example.com/api/alexa_proactive"
+        assert data["refresh_token"] == "Atzr|smapi_refresh"
 
 
 # ---------------------------------------------------------------------------
@@ -303,12 +388,14 @@ class TestStepFinish:
 class TestWebhookUrl:
 
     @pytest.mark.asyncio
-    async def test_webhook_url_uses_external_url(self, flow, ha_error):
+    async def test_webhook_url_uses_external_url(self, flow):
         _set_flow_credentials(flow)
+
+        mock_lwa = MagicMock()
+        flow._lwa_client = mock_lwa
 
         with (
             _patch_get_url("https://my-ha.duckdns.org:8123"),
-            _patch_lwa(),
             _patch_smapi() as mock_smapi_cls,
         ):
             mock_smapi = mock_smapi_cls.return_value
@@ -323,3 +410,65 @@ class TestWebhookUrl:
 
         call_args = mock_smapi.async_setup_skill_complete.call_args
         assert call_args[1]["webhook_url"] == "https://my-ha.duckdns.org:8123/api/alexa_proactive"
+
+
+# ---------------------------------------------------------------------------
+# Test: _get_suggested_locales
+# ---------------------------------------------------------------------------
+
+
+class TestGetSuggestedLocales:
+
+    def test_detects_from_country(self, flow, hass):
+        """Country IT maps to it-IT, returned first with en-US fallback."""
+        hass.config.country = "IT"
+        hass.config.language = "en"
+        assert flow._get_suggested_locales() == ["it-IT", "en-US"]
+
+    def test_detects_from_country_case_insensitive(self, flow, hass):
+        """Lowercase country code is uppercased before lookup."""
+        hass.config.country = "it"
+        hass.config.language = "en"
+        assert flow._get_suggested_locales() == ["it-IT", "en-US"]
+
+    def test_falls_back_to_language(self, flow, hass):
+        """When country has no mapping, language is used instead."""
+        hass.config.country = "ZZ"
+        hass.config.language = "de"
+        assert flow._get_suggested_locales() == ["de-DE", "en-US"]
+
+    def test_language_strips_region(self, flow, hass):
+        """Language tag like 'de-AT' is split on '-' and only 'de' is used."""
+        hass.config.country = None
+        hass.config.language = "de-AT"
+        assert flow._get_suggested_locales() == ["de-DE", "en-US"]
+
+    def test_defaults_to_en_us(self, flow, hass):
+        """No matching country or language returns only en-US."""
+        hass.config.country = "ZZ"
+        hass.config.language = "zz"
+        assert flow._get_suggested_locales() == ["en-US"]
+
+    def test_en_us_no_duplication(self, flow, hass):
+        """When detected locale is already en-US, do not duplicate it."""
+        hass.config.country = "US"
+        hass.config.language = "en"
+        assert flow._get_suggested_locales() == ["en-US"]
+
+    def test_none_country_falls_through(self, flow, hass):
+        """Country=None falls through to language detection."""
+        hass.config.country = None
+        hass.config.language = "ja"
+        assert flow._get_suggested_locales() == ["ja-JP", "en-US"]
+
+    def test_none_language_defaults(self, flow, hass):
+        """Both country=None and language=None produce the default locale."""
+        hass.config.country = None
+        hass.config.language = None
+        assert flow._get_suggested_locales() == ["en-US"]
+
+    def test_unknown_country_unknown_language(self, flow, hass):
+        """Unmapped country followed by unmapped language yields en-US."""
+        hass.config.country = "XX"
+        hass.config.language = "xx"
+        assert flow._get_suggested_locales() == ["en-US"]

@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .api import LWAClient
-from .const import CONF_COUNT, CONF_REGION, CONF_SENDER, DEFAULT_COUNT, DEFAULT_SENDER, DOMAIN, SERVICE_SEND
+from .const import CONF_ALEXA_USER_ID, CONF_CLIENT_ID, CONF_CLIENT_SECRET, CONF_COUNT, CONF_REGION, CONF_REFRESH_TOKEN, CONF_SENDER, DEFAULT_COUNT, DEFAULT_REGION, DEFAULT_SENDER, DOMAIN, SCOPE_SMAPI, SERVICE_SEND
 from .proactive import ProactiveClient
 from .views import AlexaProactiveView
 
@@ -37,7 +37,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         if client is None:
             raise ServiceValidationError("Integration not fully initialized")
 
-        user_id = entry.data.get("alexa_user_id")
+        user_id = entry.data.get(CONF_ALEXA_USER_ID)
         await client.async_send(sender=sender, count=count, user_id=user_id)
 
     hass.services.async_register(DOMAIN, SERVICE_SEND, _handle_send, schema=_SERVICE_SCHEMA)
@@ -48,8 +48,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Alexa Proactive Events from a config entry."""
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {}
 
-    lwa_client = LWAClient(hass, entry.data["client_id"], entry.data["client_secret"])
-    proactive_client = ProactiveClient(hass, lwa_client, entry.data.get(CONF_REGION, "eu"))
+    lwa_client = LWAClient(hass, entry.data[CONF_CLIENT_ID], entry.data[CONF_CLIENT_SECRET])
+    refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
+    if refresh_token:
+        lwa_client.set_refresh_token(SCOPE_SMAPI, refresh_token)
+    proactive_client = ProactiveClient(hass, lwa_client, entry.data.get(CONF_REGION, DEFAULT_REGION))
     entry.runtime_data = proactive_client
 
     hass.http.register_view(AlexaProactiveView(hass))

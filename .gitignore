@@ -7,3 +7,5 @@ dist/
 build/
 .pytest_cache/
 *.so
+.test_env/
+.test_ha/

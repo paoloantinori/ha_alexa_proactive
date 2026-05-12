@@ -1,5 +1,4 @@
-"""Unit tests for the LWA OAuth2 client (api.py)."""
-
+"""Unit tests for the LWA OAuth2 client (api.py) — Authorization Code flow."""
 import importlib.util
 import sys
 import time
@@ -17,7 +16,6 @@ COMPONENT_DIR = Path(__file__).resolve().parent.parent / "custom_components" / "
 
 
 def _register_package(pkg_name: str) -> None:
-    """Register a dummy parent package in sys.modules so relative imports resolve."""
     if pkg_name in sys.modules:
         return
     pkg = importlib.util.module_from_spec(
@@ -31,7 +29,6 @@ def _register_package(pkg_name: str) -> None:
 
 
 def _load_submodule(module_name: str, filename: str):
-    """Load a submodule from COMPONENT_DIR without normal import machinery."""
     if module_name in sys.modules:
         return sys.modules[module_name]
     _register_package("alexa_proactive")
@@ -60,7 +57,6 @@ def _load_api():
 
 
 def _make_mock_response(json_data, status=200):
-    """Build a mock aiohttp response usable as an async context manager."""
     resp = AsyncMock()
     resp.status = status
     resp.json = AsyncMock(return_value=json_data)
@@ -71,7 +67,6 @@ def _make_mock_response(json_data, status=200):
 
 
 def _make_mock_session(mock_response):
-    """Build a mock aiohttp ClientSession whose .post() returns an async context manager."""
     ctx = AsyncMock()
     ctx.__aenter__ = AsyncMock(return_value=mock_response)
     ctx.__aexit__ = AsyncMock(return_value=False)
@@ -111,16 +106,15 @@ def client(hass, api):
 
 
 @pytest.fixture
-def successful_token_response():
-    return {
-        "access_token": "Atza|test_token_abc123",
-        "expires_in": 3600,
-        "token_type": "bearer",
-    }
+def client_with_refresh(hass, api, const):
+    c = api.LWAClient(hass=hass, client_id="test_client_id", client_secret="test_client_secret")
+    c.set_refresh_token(const.SCOPE_PROACTIVE, "test_refresh_proactive")
+    c.set_refresh_token(const.SCOPE_SMAPI, "test_refresh_smapi")
+    return c
 
 
 # ---------------------------------------------------------------------------
-# Test: __init__ stores credentials
+# Test: __init__
 # ---------------------------------------------------------------------------
 
 
@@ -128,150 +122,186 @@ class TestInit:
     def test_init_stores_credentials(self, client):
         assert client._client_id == "test_client_id"
         assert client._client_secret == "test_client_secret"
-        assert client._hass is not None
         assert client._tokens == {}
+        assert client._refresh_tokens == {}
         assert client._session is None
 
 
 # ---------------------------------------------------------------------------
-# Test: _async_request_token
+# Test: get_authorization_url
 # ---------------------------------------------------------------------------
 
 
-class TestRequestToken:
+class TestGetAuthorizationUrl:
+
+    def test_returns_correct_url(self, client, const):
+        url = client.get_authorization_url(
+            "https://localhost:8123/auth/alexa_proactive/callback",
+            const.SCOPE_SMAPI,
+        )
+        assert url.startswith("https://www.amazon.com/ap/oa?")
+        assert "client_id=test_client_id" in url
+        assert "response_type=code" in url
+        assert "redirect_uri=" in url
+        assert "scope=" in url
+
+    def test_includes_smapi_scope(self, client, const):
+        url = client.get_authorization_url("https://example.com/callback", const.SCOPE_SMAPI)
+        assert "alexa%3A%3Aask%3Askills%3Areadwrite" in url
+        assert "alexa%3A%3Aask%3Amodels%3Areadwrite" in url
+
+
+# ---------------------------------------------------------------------------
+# Test: async_exchange_code
+# ---------------------------------------------------------------------------
+
+
+class TestExchangeCode:
 
     @pytest.mark.asyncio
-    async def test_request_token_success(self, client, const, successful_token_response):
-        mock_session = _make_mock_session(_make_mock_response(successful_token_response))
+    async def test_success(self, client, const, api):
+        token_response = {
+            "access_token": "Atza|test_token",
+            "refresh_token": "Atzr|test_refresh",
+            "expires_in": 3600,
+            "token_type": "bearer",
+        }
+        mock_session = _make_mock_session(_make_mock_response(token_response))
 
         with patch.object(client, "_session", mock_session):
-            result = await client._async_request_token(const.SCOPE_PROACTIVE)
+            result = await client.async_exchange_code(
+                code="test_auth_code",
+                redirect_uri="https://localhost:8123/auth/alexa_proactive/callback",
+                scope=const.SCOPE_SMAPI,
+            )
 
         call_args = mock_session.post.call_args
         assert call_args[0][0] == const.LWA_TOKEN_URL
 
         form_data = call_args[1]["data"]
-        assert form_data["grant_type"] == "client_credentials"
+        assert form_data["grant_type"] == "authorization_code"
+        assert form_data["code"] == "test_auth_code"
         assert form_data["client_id"] == "test_client_id"
         assert form_data["client_secret"] == "test_client_secret"
-        assert form_data["scope"] == const.SCOPE_PROACTIVE
 
-        assert result["access_token"] == "Atza|test_token_abc123"
-        assert result["expires_in"] == 3600
-        assert result["token_type"] == "bearer"
+        assert result["access_token"] == "Atza|test_token"
+        assert const.SCOPE_SMAPI in client._tokens
+        assert client._tokens[const.SCOPE_SMAPI].token == "Atza|test_token"
+        assert client._refresh_tokens[const.SCOPE_SMAPI] == "Atzr|test_refresh"
 
     @pytest.mark.asyncio
-    async def test_request_token_invalid_credentials(self, client, const, ha_error):
+    async def test_error_response(self, client, const, ha_error):
         mock_session = _make_mock_session(
-            _make_mock_response({"error": "invalid_client"}, status=401)
+            _make_mock_response({"error": "invalid_grant"})
         )
 
         with (
             patch.object(client, "_session", mock_session),
-            pytest.raises(ha_error, match="Invalid LWA credentials"),
+            pytest.raises(ha_error, match="LWA error"),
         ):
-            await client._async_request_token(const.SCOPE_PROACTIVE)
+            await client.async_exchange_code(
+                code="bad_code",
+                redirect_uri="https://localhost:8123/auth/alexa_proactive/callback",
+                scope=const.SCOPE_SMAPI,
+            )
 
     @pytest.mark.asyncio
-    async def test_request_token_network_error(self, client, const, ha_error):
+    async def test_network_error(self, client, const, ha_error):
         import aiohttp
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         mock_session.post = MagicMock(side_effect=aiohttp.ClientError("connection refused"))
         mock_session.closed = False
 
         with (
             patch.object(client, "_session", mock_session),
-            pytest.raises(ha_error, match="Cannot connect to Amazon LWA"),
+            pytest.raises(ha_error, match="Cannot connect"),
         ):
-            await client._async_request_token(const.SCOPE_PROACTIVE)
+            await client.async_exchange_code(
+                code="test_code",
+                redirect_uri="https://localhost:8123/auth/alexa_proactive/callback",
+                scope=const.SCOPE_SMAPI,
+            )
 
     @pytest.mark.asyncio
-    async def test_request_token_missing_access_token(self, client, const, ha_error):
+    async def test_unexpected_response(self, client, const, ha_error):
         mock_session = _make_mock_session(
-            _make_mock_response({"error": "unauthorized_client"})
+            _make_mock_response({"unexpected": "data"})
         )
 
         with (
             patch.object(client, "_session", mock_session),
-            pytest.raises(ha_error, match="Missing required scope"),
+            pytest.raises(ha_error, match="Invalid LWA token response"),
         ):
-            await client._async_request_token(const.SCOPE_PROACTIVE)
+            await client.async_exchange_code(
+                code="test_code",
+                redirect_uri="https://localhost:8123/auth/alexa_proactive/callback",
+                scope=const.SCOPE_SMAPI,
+            )
 
 
 # ---------------------------------------------------------------------------
-# Test: _async_get_token caching behaviour
+# Test: token retrieval and refresh
 # ---------------------------------------------------------------------------
 
 
-class TestGetTokenCaching:
+class TestGetToken:
 
     @pytest.mark.asyncio
-    async def test_get_token_caches_result(self, client, const):
-        payload = {
-            "access_token": "Atza|cached_token",
+    async def test_returns_cached_proactive_token(self, client_with_refresh, const, api):
+        entry = api._TokenCache(token="Atza|cached", expires_at=time.monotonic() + 3000)
+        client_with_refresh._tokens[const.SCOPE_PROACTIVE] = entry
+
+        token = await client_with_refresh.async_get_proactive_token()
+        assert token == "Atza|cached"
+
+    @pytest.mark.asyncio
+    async def test_returns_cached_smapi_token(self, client_with_refresh, const, api):
+        entry = api._TokenCache(token="Atza|cached_smapi", expires_at=time.monotonic() + 3000)
+        client_with_refresh._tokens[const.SCOPE_SMAPI] = entry
+
+        token = await client_with_refresh.async_get_smapi_token()
+        assert token == "Atza|cached_smapi"
+
+    @pytest.mark.asyncio
+    async def test_uses_client_credentials_when_expired(self, client, const, api):
+        cc_response = {
+            "access_token": "Atza|fresh",
             "expires_in": 3600,
             "token_type": "bearer",
         }
-        mock_session = _make_mock_session(_make_mock_response(payload))
+        mock_session = _make_mock_session(_make_mock_response(cc_response))
+
+        with patch.object(client, "_session", mock_session):
+            token = await client.async_get_proactive_token()
+
+        assert token == "Atza|fresh"
+
+        form_data = mock_session.post.call_args[1]["data"]
+        assert form_data["grant_type"] == "client_credentials"
+        assert form_data["scope"] == const.SCOPE_PROACTIVE
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_error_raises(self, client, const, api, ha_error):
+        mock_session = _make_mock_session(
+            _make_mock_response({"error": "invalid_grant"})
+        )
 
         with (
             patch.object(client, "_session", mock_session),
-            patch.object(
-                client, "_async_request_token", wraps=client._async_request_token
-            ) as spy,
+            pytest.raises(ha_error, match="LWA error: invalid_grant"),
         ):
-            first = await client._async_get_token(const.SCOPE_PROACTIVE)
-            second = await client._async_get_token(const.SCOPE_PROACTIVE)
-
-        assert first == "Atza|cached_token"
-        assert second == "Atza|cached_token"
-        spy.assert_called_once()
+            await client.async_get_proactive_token()
 
     @pytest.mark.asyncio
-    async def test_get_token_refreshes_near_expiry(self, client, const):
-        client._tokens[const.SCOPE_PROACTIVE] = {
-            "access_token": "Atza|expired_token",
-            "expires_at": time.monotonic() - 10,
-        }
-
-        fresh_payload = {
-            "access_token": "Atza|fresh_token",
+    async def test_client_credentials_stores_token(self, client, const, api):
+        cc_response = {
+            "access_token": "Atza|cc_token",
             "expires_in": 3600,
-            "token_type": "bearer",
         }
-        mock_session = _make_mock_session(_make_mock_response(fresh_payload))
+        mock_session = _make_mock_session(_make_mock_response(cc_response))
 
         with patch.object(client, "_session", mock_session):
-            token = await client._async_get_token(const.SCOPE_PROACTIVE)
+            await client.async_get_proactive_token()
 
-        assert token == "Atza|fresh_token"
-        mock_session.post.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Test: public convenience methods use correct scopes
-# ---------------------------------------------------------------------------
-
-
-class TestPublicMethods:
-
-    @pytest.mark.asyncio
-    async def test_get_proactive_token_scope(self, client, const):
-        with patch.object(
-            client, "_async_get_token", new_callable=AsyncMock, return_value="tok"
-        ) as mock_get:
-            result = await client.async_get_proactive_token()
-
-        mock_get.assert_called_once_with(const.SCOPE_PROACTIVE)
-        assert result == "tok"
-
-    @pytest.mark.asyncio
-    async def test_get_smapi_token_scope(self, client, const):
-        with patch.object(
-            client, "_async_get_token", new_callable=AsyncMock, return_value="tok"
-        ) as mock_get:
-            result = await client.async_get_smapi_token()
-
-        mock_get.assert_called_once_with(const.SCOPE_SMAPI)
-        assert result == "tok"
+        assert client._tokens[const.SCOPE_PROACTIVE].token == "Atza|cc_token"

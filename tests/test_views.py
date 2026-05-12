@@ -296,3 +296,120 @@ class TestResponseFormat:
         resp = await view.post(_make_request(event))
         body = json.loads(resp.body)
         assert "sessionAttributes" in body
+
+
+# ---------------------------------------------------------------------------
+# Helpers: AlexaAuthCallbackView
+# ---------------------------------------------------------------------------
+
+
+def _make_callback_hass():
+    """Create a mock hass with empty data for auth callback tests."""
+    hass = MagicMock()
+    hass.data = {}
+    return hass
+
+
+def _make_get_request(query: dict):
+    """Create a mock aiohttp Request with query parameters for GET."""
+    import aiohttp
+
+    request = MagicMock(spec=aiohttp.web.Request)
+    request.query = query
+    return request
+
+
+@pytest.fixture
+def callback_hass():
+    return _make_callback_hass()
+
+
+@pytest.fixture
+def callback_view(views_mod, callback_hass):
+    return views_mod.AlexaAuthCallbackView(callback_hass)
+
+
+# ---------------------------------------------------------------------------
+# Test: AlexaAuthCallbackView attributes
+# ---------------------------------------------------------------------------
+
+
+class TestAuthCallbackViewAttributes:
+
+    def test_url(self, callback_view):
+        assert callback_view.url == "/auth/alexa_proactive/callback"
+
+    def test_name(self, callback_view):
+        assert callback_view.name == "auth:alexa_proactive:callback"
+
+    def test_no_auth_required(self, callback_view):
+        assert callback_view.requires_auth is False
+
+
+# ---------------------------------------------------------------------------
+# Test: AlexaAuthCallbackView success
+# ---------------------------------------------------------------------------
+
+
+class TestAuthCallbackSuccess:
+
+    @pytest.mark.asyncio
+    async def test_stores_code_in_hass_data(self, callback_view, callback_hass):
+        request = _make_get_request({"code": "abc", "state": "flow123_smapi"})
+        await callback_view.get(request)
+        assert callback_hass.data["alexa_proactive"]["auth_codes"]["flow123_smapi"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_returns_success_html(self, callback_view):
+        request = _make_get_request({"code": "abc", "state": "flow123_smapi"})
+        resp = await callback_view.get(request)
+        assert resp.status == 200
+        assert "successful" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_state_key_format_matches_config_flow(self, callback_view, callback_hass):
+        """Verify state key stored as '{flow_id}_smapi' matches config_flow lookup pattern."""
+        flow_id = "a1b2c3d4"
+        state_key = f"{flow_id}_smapi"
+        request = _make_get_request({"code": "secret_code", "state": state_key})
+        await callback_view.get(request)
+        auth_codes = callback_hass.data["alexa_proactive"]["auth_codes"]
+        assert state_key in auth_codes
+        assert auth_codes[state_key] == "secret_code"
+
+
+# ---------------------------------------------------------------------------
+# Test: AlexaAuthCallbackView errors
+# ---------------------------------------------------------------------------
+
+
+class TestAuthCallbackError:
+
+    @pytest.mark.asyncio
+    async def test_error_param_returns_400(self, callback_view):
+        request = _make_get_request({"error": "access_denied"})
+        resp = await callback_view.get(request)
+        assert resp.status == 400
+        assert "Authorization failed" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_error_with_description(self, callback_view):
+        request = _make_get_request(
+            {"error": "server_error", "error_description": "something went wrong"}
+        )
+        resp = await callback_view.get(request)
+        assert resp.status == 400
+        assert "Authorization failed" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_missing_code_returns_400(self, callback_view):
+        request = _make_get_request({"state": "flow123_smapi"})
+        resp = await callback_view.get(request)
+        assert resp.status == 400
+        assert "Missing parameters" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_missing_state_returns_400(self, callback_view):
+        request = _make_get_request({"code": "abc"})
+        resp = await callback_view.get(request)
+        assert resp.status == 400
