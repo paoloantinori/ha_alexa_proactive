@@ -12,13 +12,14 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 ## Prerequisites
 
-- **Amazon Developer Account**: Create one at [developer.amazon.com](https://developer.amazon.com)
-- **LWA Security Profile**: Create one at the [Security Profiles console](https://developer.amazon.com/settings/console/securityprofile/overview.html) ([docs](https://developer.amazon.com/docs/login-with-amazon/security-profile.html)):
-  - **Client ID** and **Client Secret** from the Web Settings tab
-  - **Allowed Return URLs**: Add your HA external URL followed by `/auth/alexa_proactive/callback` (e.g. `https://my-ha.duckdns.org:8123/auth/alexa_proactive/callback`)
-  - The profile must be granted the OAuth scope:
-    - `alexa::ask:skills:readwrite alexa::ask:models:readwrite` — for skill creation and model management during setup
-- **Home Assistant External URL**: Must be configured (`Settings > System > Network`) so Alexa can reach the skill endpoint. This typically requires a Nabu Casa subscription, a reverse proxy, or another tunneling solution.
+1. **Amazon Developer Account**: Create one at [developer.amazon.com](https://developer.amazon.com)
+
+2. **LWA Security Profile**: Create one at the [Security Profiles console](https://developer.amazon.com/settings/console/securityprofile/overview.html) ([docs](https://developer.amazon.com/docs/login-with-amazon/security-profile.html)). You need two things from this profile:
+
+   - **Client ID** and **Client Secret** — found under the Web Settings tab
+   - **Allowed Return URLs** — add your HA external URL followed by `/auth/alexa_proactive/callback` (e.g. `https://my-ha.duckdns.org:8123/auth/alexa_proactive/callback`)
+
+3. **Home Assistant External URL**: Must be configured (`Settings > System > Network`) so Alexa can reach the skill endpoint. This typically requires a Nabu Casa subscription, a reverse proxy, or another tunneling solution.
 
 ## Installation
 
@@ -126,7 +127,6 @@ automation:
 
 **"Invalid LWA credentials" / "Authorization failed" during setup**
 - Verify your Client ID and Client Secret are correct
-- Check that your LWA Security Profile has the `alexa::ask:skills:readwrite alexa::ask:models:readwrite` scope
 - Ensure your **Allowed Return URL** in the LWA console matches `https://<your-ha-url>/auth/alexa_proactive/callback`
 
 **"Authorization pending" does not resolve**
