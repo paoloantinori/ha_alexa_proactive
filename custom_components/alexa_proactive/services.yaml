@@ -3,10 +3,10 @@ send:
   description: Send a proactive notification (yellow ring) to Alexa devices
   fields:
     sender:
-      name: Sender name
-      description: Name shown in the notification ("You have N messages from [sender]")
+      name: Message
+      description: "Text displayed in the notification after the skill name (e.g. 'notification from [skill name]: [this value]')"
       required: false
-      example: "Home Assistant"
+      example: "Front Door"
       default: "Home Assistant"
       selector:
         text:

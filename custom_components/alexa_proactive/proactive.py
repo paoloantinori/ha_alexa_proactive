@@ -10,15 +10,13 @@ import aiohttp
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import LWAClient
-from .const import DEFAULT_SENDER, EVENT_SCHEMA, PROACTIVE_API_URLS
+from .const import DEFAULT_SENDER, EVENT_SCHEMA, PROACTIVE_API_URLS, SCOPE_PROACTIVE
 
 _LOGGER = logging.getLogger(__name__)
 
 _EXPIRY_HOURS = 1
-_RETRY_ON_FORBIDDEN = True
 
 
 class ProactiveClient:
@@ -47,11 +45,10 @@ class ProactiveClient:
         try:
             return await self._async_post(token, payload)
         except HomeAssistantError:
-            if _RETRY_ON_FORBIDDEN:
-                _LOGGER.debug("Retrying with fresh token")
-                token = await self._lwa.async_get_proactive_token()
-                return await self._async_post(token, payload)
-            raise
+            _LOGGER.debug("Retrying with fresh token")
+            self._lwa.invalidate_token(SCOPE_PROACTIVE)
+            token = await self._lwa.async_get_proactive_token()
+            return await self._async_post(token, payload)
 
     def _build_payload(self, sender: str, count: int, user_id: str | None) -> dict:
         """Build the proactive event JSON payload."""
@@ -88,16 +85,21 @@ class ProactiveClient:
 
     async def _async_post(self, token: str, payload: dict) -> dict:
         if self._session is None or self._session.closed:
-            self._session = async_create_clientsession(self._hass)
+            connector = aiohttp.TCPConnector(resolver=aiohttp.resolver.ThreadedResolver())
+            self._session = aiohttp.ClientSession(connector=connector)
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
         }
 
+        url = self._api_url()
+        _LOGGER.debug("Proactive Events POST %s — token prefix: %s", url, token[:20])
         try:
-            async with self._session.post(self._api_url(), json=payload, headers=headers) as resp:
+            async with self._session.post(url, json=payload, headers=headers) as resp:
                 if resp.status == 403:
+                    body = await resp.text()
+                    _LOGGER.error("Proactive Events API 403: %s", body)
                     raise HomeAssistantError("Proactive Events API returned 403 — token may be expired")
                 if resp.status == 400:
                     body = await resp.text()

@@ -108,7 +108,6 @@ def client(hass, api):
 @pytest.fixture
 def client_with_refresh(hass, api, const):
     c = api.LWAClient(hass=hass, client_id="test_client_id", client_secret="test_client_secret")
-    c.set_refresh_token(const.SCOPE_PROACTIVE, "test_refresh_proactive")
     c.set_refresh_token(const.SCOPE_SMAPI, "test_refresh_smapi")
     return c
 
@@ -248,14 +247,6 @@ class TestExchangeCode:
 class TestGetToken:
 
     @pytest.mark.asyncio
-    async def test_returns_cached_proactive_token(self, client_with_refresh, const, api):
-        entry = api._TokenCache(token="Atza|cached", expires_at=time.monotonic() + 3000)
-        client_with_refresh._tokens[const.SCOPE_PROACTIVE] = entry
-
-        token = await client_with_refresh.async_get_proactive_token()
-        assert token == "Atza|cached"
-
-    @pytest.mark.asyncio
     async def test_returns_cached_smapi_token(self, client_with_refresh, const, api):
         entry = api._TokenCache(token="Atza|cached_smapi", expires_at=time.monotonic() + 3000)
         client_with_refresh._tokens[const.SCOPE_SMAPI] = entry
@@ -264,44 +255,107 @@ class TestGetToken:
         assert token == "Atza|cached_smapi"
 
     @pytest.mark.asyncio
-    async def test_uses_client_credentials_when_expired(self, client, const, api):
-        cc_response = {
-            "access_token": "Atza|fresh",
+    async def test_proactive_token_raises_without_skill_credentials(self, client_with_refresh, const, api, ha_error):
+        """Proactive token raises when skill credentials not configured."""
+        entry = api._TokenCache(token="Atza|smapi_token", expires_at=time.monotonic() + 3000)
+        client_with_refresh._tokens[const.SCOPE_SMAPI] = entry
+
+        with pytest.raises(ha_error, match="Skill credentials not configured"):
+            await client_with_refresh.async_get_proactive_token()
+
+    @pytest.mark.asyncio
+    async def test_refreshes_smapi_token(self, client_with_refresh, const, api):
+        refresh_response = {
+            "access_token": "Atza|refreshed",
             "expires_in": 3600,
             "token_type": "bearer",
         }
-        mock_session = _make_mock_session(_make_mock_response(cc_response))
+        mock_session = _make_mock_session(_make_mock_response(refresh_response))
 
-        with patch.object(client, "_session", mock_session):
-            token = await client.async_get_proactive_token()
+        with patch.object(client_with_refresh, "_session", mock_session):
+            token = await client_with_refresh.async_get_smapi_token()
 
-        assert token == "Atza|fresh"
+        assert token == "Atza|refreshed"
+
+        form_data = mock_session.post.call_args[1]["data"]
+        assert form_data["grant_type"] == "refresh_token"
+        assert form_data["refresh_token"] == "test_refresh_smapi"
+
+    @pytest.mark.asyncio
+    async def test_no_refresh_token_raises(self, client, const, api, ha_error):
+        with pytest.raises(ha_error, match="No token for scope"):
+            await client.async_get_smapi_token()
+
+
+# ---------------------------------------------------------------------------
+# Test: proactive token with skill credentials (client_credentials grant)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def client_with_skill_creds(hass, api):
+    c = api.LWAClient(hass=hass, client_id="test_client_id", client_secret="test_client_secret")
+    c.set_skill_credentials("skill_cid_123", "skill_csecret_456")
+    return c
+
+
+class TestProactiveClientCredentials:
+
+    @pytest.mark.asyncio
+    async def test_proactive_token_uses_client_credentials(self, client_with_skill_creds, const, api):
+        token_response = {
+            "access_token": "Atna|proactive_token",
+            "expires_in": 3600,
+            "token_type": "bearer",
+        }
+        mock_session = _make_mock_session(_make_mock_response(token_response))
+
+        with patch.object(client_with_skill_creds, "_session", mock_session):
+            token = await client_with_skill_creds.async_get_proactive_token()
+
+        assert token == "Atna|proactive_token"
 
         form_data = mock_session.post.call_args[1]["data"]
         assert form_data["grant_type"] == "client_credentials"
-        assert form_data["scope"] == const.SCOPE_PROACTIVE
+        assert form_data["client_id"] == "skill_cid_123"
+        assert form_data["client_secret"] == "skill_csecret_456"
+        assert form_data["scope"] == "alexa::proactive_events"
+
+        assert const.SCOPE_PROACTIVE in client_with_skill_creds._tokens
 
     @pytest.mark.asyncio
-    async def test_client_credentials_error_raises(self, client, const, api, ha_error):
-        mock_session = _make_mock_session(
-            _make_mock_response({"error": "invalid_grant"})
-        )
+    async def test_proactive_token_caches(self, client_with_skill_creds, const, api):
+        entry = api._TokenCache(token="Atna|cached_proactive", expires_at=time.monotonic() + 3000)
+        client_with_skill_creds._tokens[const.SCOPE_PROACTIVE] = entry
 
-        with (
-            patch.object(client, "_session", mock_session),
-            pytest.raises(ha_error, match="LWA error: invalid_grant"),
-        ):
-            await client.async_get_proactive_token()
+        token = await client_with_skill_creds.async_get_proactive_token()
+        assert token == "Atna|cached_proactive"
 
     @pytest.mark.asyncio
-    async def test_client_credentials_stores_token(self, client, const, api):
-        cc_response = {
-            "access_token": "Atza|cc_token",
+    async def test_proactive_token_rerequests_on_expiry(self, client_with_skill_creds, const, api):
+        expired_entry = api._TokenCache(token="Atna|expired", expires_at=time.monotonic() - 1)
+        client_with_skill_creds._tokens[const.SCOPE_PROACTIVE] = expired_entry
+
+        token_response = {
+            "access_token": "Atna|fresh_proactive",
             "expires_in": 3600,
+            "token_type": "bearer",
         }
-        mock_session = _make_mock_session(_make_mock_response(cc_response))
+        mock_session = _make_mock_session(_make_mock_response(token_response))
 
-        with patch.object(client, "_session", mock_session):
-            await client.async_get_proactive_token()
+        with patch.object(client_with_skill_creds, "_session", mock_session):
+            token = await client_with_skill_creds.async_get_proactive_token()
 
-        assert client._tokens[const.SCOPE_PROACTIVE].token == "Atza|cc_token"
+        assert token == "Atna|fresh_proactive"
+        form_data = mock_session.post.call_args[1]["data"]
+        assert form_data["grant_type"] == "client_credentials"
+
+    @pytest.mark.asyncio
+    async def test_set_skill_credentials_stores(self, hass, api):
+        c = api.LWAClient(hass=hass, client_id="cid", client_secret="csecret")
+        assert c._skill_client_id is None
+        assert c._skill_client_secret is None
+
+        c.set_skill_credentials("my_skill_cid", "my_skill_csecret")
+        assert c._skill_client_id == "my_skill_cid"
+        assert c._skill_client_secret == "my_skill_csecret"

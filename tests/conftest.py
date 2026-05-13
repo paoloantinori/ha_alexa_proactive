@@ -31,6 +31,9 @@ sys.modules.setdefault("homeassistant.helpers.aiohttp_client", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.selector", MagicMock())
 sys.modules.setdefault("homeassistant.helpers.network", MagicMock())
 
+_json_mod = sys.modules.setdefault("homeassistant.helpers.json", MagicMock())
+_json_mod.json_bytes = lambda obj: __import__("json").dumps(obj).encode()
+
 # Mock homeassistant.components.http with a real-ish HomeAssistantView base.
 # The view's .json() method must return an aiohttp-like Response with a .body.
 from aiohttp import web as _aiohttp_web
@@ -89,6 +92,16 @@ if _ce_mod is None:
     _ce_mod = MagicMock()
     sys.modules["homeassistant.config_entries"] = _ce_mod
 _ce_mod.ConfigFlow = _FakeConfigFlow
+
+
+class _ConfigEntryState:
+    LOADED = "loaded"
+    NOT_LOADED = "not_loaded"
+    SETUP_IN_PROGRESS = "setup_in_progress"
+    SETUP_RETRY = "setup_retry"
+
+
+_ce_mod.ConfigEntryState = _ConfigEntryState
 # Ensure `from homeassistant import config_entries` resolves
 _ha_pkg.config_entries = _ce_mod
 

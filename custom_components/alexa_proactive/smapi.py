@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -97,29 +98,115 @@ class SMTPClient:
 
     async def async_get_vendor_id(self) -> str:
         data = await self._async_request("GET", "/v1/vendors")
+        if not isinstance(data, dict):
+            raise HomeAssistantError("Unexpected response from vendor list API")
         vendors = data.get("vendors", [])
         if not vendors:
             raise HomeAssistantError("No Amazon vendor account found")
         return vendors[0]["id"]
 
-    async def _async_create_skill(self, vendor_id: str, webhook_url: str, skill_name: str) -> str:
-        manifest = self._build_manifest(webhook_url, skill_name)
+    async def _async_create_skill(self, vendor_id: str, webhook_url: str, skill_name: str, locales: list[str] | None = None) -> str:
+        manifest = await self._build_manifest(webhook_url, skill_name, locales)
         data = await self._async_request("POST", "/v1/skills", json={"vendorId": vendor_id, "manifest": manifest})
+        if not isinstance(data, dict) or "skillId" not in data:
+            raise HomeAssistantError("Skill creation did not return a skill ID")
         return data["skillId"]
 
     async def async_update_manifest(self, skill_id: str, webhook_url: str, skill_name: str = "Home Assistant") -> None:
-        manifest = self._build_manifest(webhook_url, skill_name)
-        await self._async_request("PUT", f"/v1/skills/{skill_id}/stages/development/manifest", json={"manifest": manifest})
+        manifest = await self._build_manifest(webhook_url, skill_name)
+        await self._async_request(
+            "PUT",
+            f"/v1/skills/{skill_id}/stages/development/manifest",
+            json={"manifest": manifest},
+            headers={"If-Match": "*"},
+        )
 
     async def async_upload_model(self, skill_id: str, locale: str, model: dict) -> None:
+        headers: dict[str, str] = {}
+        try:
+            existing = await self._async_request(
+                "GET",
+                f"/v1/skills/{skill_id}/stages/development/interactionModel/locales/{locale}",
+            )
+            if isinstance(existing, dict) and "eTag" in existing:
+                headers["If-Match"] = existing["eTag"]
+        except HomeAssistantError:
+            pass
+
         await self._async_request(
             "PUT",
             f"/v1/skills/{skill_id}/stages/development/interactionModel/locales/{locale}",
             json=model,
+            headers=headers,
         )
 
     async def async_enable_skill(self, skill_id: str) -> None:
         await self._async_request("PUT", f"/v1/skills/{skill_id}/stages/development/enablement", json={})
+
+    async def async_get_skill_credentials(self, skill_id: str) -> dict:
+        data = await self._async_request("GET", f"/v1/skills/{skill_id}/credentials")
+        if not isinstance(data, dict):
+            return {"client_id": None, "client_secret": None}
+        creds = data.get("skillMessagingCredentials", {})
+        return {
+            "client_id": creds.get("clientId"),
+            "client_secret": creds.get("clientSecret"),
+        }
+
+    async def async_get_skill_status(self, skill_id: str) -> dict:
+        data = await self._async_request("GET", f"/v1/skills/{skill_id}/status")
+        return data if isinstance(data, dict) else {}
+
+    async def async_wait_for_model_build(
+        self,
+        skill_id: str,
+        locales: list[str],
+        timeout: float = 60.0,
+        poll_interval: float = 5.0,
+    ) -> list[str]:
+        """Poll skill status until at least one locale build reaches SUCCEEDED."""
+        deadline = time.monotonic() + timeout
+
+        while time.monotonic() < deadline:
+            try:
+                data = await self.async_get_skill_status(skill_id)
+            except HomeAssistantError as err:
+                _LOGGER.warning("Skill status poll failed (will retry): %s", err)
+                await asyncio.sleep(poll_interval)
+                continue
+
+            locale_statuses = data.get("interactionModel", {}).get("locales", {})
+            succeeded: list[str] = []
+            failed: list[str] = []
+            pending: list[str] = []
+
+            for locale in locales:
+                status = locale_statuses.get(locale, {}).get("lastUpdateRequest", {}).get("status", "")
+                if status == "SUCCEEDED":
+                    succeeded.append(locale)
+                elif status == "FAILED":
+                    failed.append(locale)
+                else:
+                    pending.append(locale)
+
+            _LOGGER.warning(
+                "Skill %s build status — succeeded: %s, failed: %s, pending: %s",
+                skill_id, succeeded, failed, pending,
+            )
+
+            if succeeded:
+                return succeeded
+            if not pending:
+                break
+            elapsed = deadline - time.monotonic()
+            if elapsed > poll_interval:
+                await asyncio.sleep(poll_interval)
+            else:
+                break
+
+        raise HomeAssistantError(
+            f"Model build timed out after {timeout}s — no locales reached SUCCEEDED"
+        )
 
     async def async_setup_skill_complete(
         self,
@@ -128,18 +215,19 @@ class SMTPClient:
         skill_name: str = "Home Assistant",
     ) -> dict:
         """Orchestrate full skill setup: reuse existing or create, upload models, enable."""
-        _LOGGER.info("SMAPI setup: webhook_url=%s, skill_name=%s", webhook_url, skill_name)
+        _LOGGER.warning("SMAPI setup: webhook_url=%s, skill_name=%s", webhook_url, skill_name)
         vendor_id = await self.async_get_vendor_id()
         skill_id: str | None = None
+        selected_locales = list(models.keys())
 
         # Reuse existing skill if one with matching name already exists
         skill_id = await self._async_find_existing_skill(vendor_id, skill_name)
         if skill_id:
-            _LOGGER.info("Reusing existing skill: %s", skill_id)
+            _LOGGER.warning("Reusing existing skill: %s", skill_id)
         else:
             try:
-                skill_id = await self._async_create_skill(vendor_id, webhook_url, skill_name)
-                _LOGGER.info("Created new skill %s, waiting for provisioning", skill_id)
+                skill_id = await self._async_create_skill(vendor_id, webhook_url, skill_name, selected_locales)
+                _LOGGER.warning("Created new skill %s, waiting for provisioning", skill_id)
                 await asyncio.sleep(5)
             except HomeAssistantError as err:
                 if "409" in str(err):
@@ -147,27 +235,37 @@ class SMTPClient:
                 else:
                     raise
 
-        # Upload models concurrently and track which locales succeed
+        # Upload models concurrently with retry, track which locales succeed
+        _MAX_RETRIES = 2
+
         async def _upload(locale: str, model: dict) -> str | None:
-            try:
-                await self.async_upload_model(skill_id, model=model, locale=locale)
-                return locale
-            except HomeAssistantError as err:
-                _LOGGER.warning("Failed to upload model for %s (non-fatal): %s", locale, err)
-                return None
+            for attempt in range(_MAX_RETRIES + 1):
+                try:
+                    await self.async_upload_model(skill_id, model=model, locale=locale)
+                    return locale
+                except HomeAssistantError as err:
+                    if attempt < _MAX_RETRIES:
+                        _LOGGER.debug("Model upload for %s failed (attempt %d), retrying: %s", locale, attempt + 1, err)
+                        await asyncio.sleep(2)
+                    else:
+                        _LOGGER.warning("Failed to upload model for %s after %d attempts: %s", locale, _MAX_RETRIES + 1, err)
+                        return None
 
-        results = await asyncio.gather(*[_upload(loc, m) for loc, m in models.items()])
-        successful_locales = [r for r in results if r is not None]
+        upload_locales: list[str] = []
+        results = await asyncio.gather(*(_upload(loc, m) for loc, m in models.items()))
+        upload_locales = [r for r in results if r is not None]
 
-        # Update manifest — only include locales with working models
-        if not successful_locales:
+        if not upload_locales:
             raise HomeAssistantError("All model uploads failed — no usable locales for skill")
-        manifest = self._build_manifest(webhook_url, skill_name, successful_locales)
+
+        # Update manifest with uploaded locales (builds happen asynchronously on Amazon's side)
+        manifest = await self._build_manifest(webhook_url, skill_name, upload_locales)
         try:
             await self._async_request(
                 "PUT",
                 f"/v1/skills/{skill_id}/stages/development/manifest",
                 json={"manifest": manifest},
+                headers={"If-Match": "*"},
             )
         except HomeAssistantError as err:
             _LOGGER.warning("Failed to update manifest (non-fatal): %s", err)
@@ -175,13 +273,15 @@ class SMTPClient:
         try:
             await self.async_enable_skill(skill_id)
         except HomeAssistantError as err:
-            _LOGGER.warning("Failed to enable skill %s (non-fatal): %s", skill_id, err)
+            _LOGGER.warning("Failed to enable skill %s (will need manual enable in Alexa app): %s", skill_id, err)
 
         return {"skill_id": skill_id, "vendor_id": vendor_id, "webhook_url": webhook_url}
 
     async def _async_find_existing_skill(self, vendor_id: str, skill_name: str) -> str | None:
         """Check if a skill with the given name already exists."""
         data = await self._async_request("GET", "/v1/skills", params={"vendorId": vendor_id})
+        if not isinstance(data, dict):
+            return None
         skills = data.get("skills", [])
         for skill in skills:
             if skill.get("stage") != "development":
@@ -195,6 +295,8 @@ class SMTPClient:
 
     async def _async_resolve_conflict(self, vendor_id: str, webhook_url: str, skill_name: str) -> str:
         data = await self._async_request("GET", "/v1/skills", params={"vendorId": vendor_id})
+        if not isinstance(data, dict):
+            raise HomeAssistantError("Skill conflict but no existing skills found")
         skills = data.get("skills", [])
         if not skills:
             raise HomeAssistantError("Skill conflict but no existing skills found")
@@ -202,8 +304,38 @@ class SMTPClient:
         await self.async_update_manifest(skill_id, webhook_url, skill_name)
         return skill_id
 
-    def _build_manifest(self, webhook_url: str, skill_name: str, locales: list[str] | None = None) -> dict:
+    async def _detect_ssl_type(self, webhook_url: str) -> str:
+        """Detect SSL certificate type by probing the endpoint."""
+        import ssl
+        import socket
+        from urllib.parse import urlparse
+
+        parsed = urlparse(webhook_url)
+        hostname = parsed.hostname
+        if not hostname:
+            return "Trusted"
+
+        def _probe() -> str:
+            try:
+                ctx = ssl.create_default_context()
+                with socket.create_connection((hostname, 443), timeout=5) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                        cert = ssock.getpeercert() or {}
+                        sans = cert.get("subjectAltName", ())
+                        for entry in sans:
+                            if isinstance(entry, tuple) and entry[0] == "DNS" and entry[1].startswith("*."):
+                                return "Wildcard"
+            except Exception as err:
+                _LOGGER.warning("SSL type detection failed for %s, defaulting to 'Trusted': %s", webhook_url, err)
+            return "Trusted"
+
+        return await self._hass.async_add_executor_job(_probe)
+
+    async def _build_manifest(self, webhook_url: str, skill_name: str, locales: list[str] | None = None) -> dict:
         """Build the skill manifest payload."""
+        ssl_type = await self._detect_ssl_type(webhook_url)
+        _LOGGER.info("Detected SSL certificate type: %s for %s", ssl_type, webhook_url)
+
         target = locales if locales else list(_MANIFEST_LOCALE_INFO)
         locale_manifests = {}
         for loc in target:
@@ -214,6 +346,13 @@ class SMTPClient:
                 **info,
             }
 
+        endpoint = {"sslCertificateType": ssl_type, "uri": webhook_url}
+        regions = {
+            "NA": {"endpoint": endpoint},
+            "EU": {"endpoint": endpoint},
+            "FE": {"endpoint": endpoint},
+        }
+
         return {
             "publishingInformation": {
                 "locales": locale_manifests,
@@ -222,10 +361,8 @@ class SMTPClient:
             },
             "apis": {
                 "custom": {
-                    "endpoint": {
-                        "sslCertificateType": "Trusted",
-                        "uri": webhook_url,
-                    },
+                    "endpoint": endpoint,
+                    "regions": regions,
                     "interfaces": [],
                 }
             },
@@ -234,15 +371,8 @@ class SMTPClient:
             "events": {
                 "publications": [{"eventName": EVENT_SCHEMA}],
                 "subscriptions": [{"eventName": "SKILL_PROACTIVE_SUBSCRIPTION_CHANGED"}],
-                "endpoint": {
-                    "sslCertificateType": "Trusted",
-                    "uri": webhook_url,
-                },
-                "regions": {
-                    "NA": {"endpoint": {"sslCertificateType": "Trusted", "uri": webhook_url}},
-                    "EU": {"endpoint": {"sslCertificateType": "Trusted", "uri": webhook_url}},
-                    "FE": {"endpoint": {"sslCertificateType": "Trusted", "uri": webhook_url}},
-                },
+                "endpoint": endpoint,
+                "regions": regions,
             },
         }
 
@@ -255,8 +385,8 @@ class SMTPClient:
             headers["Content-Type"] = "application/json"
 
         if self._session is None or self._session.closed:
-            from homeassistant.helpers.aiohttp_client import async_create_clientsession
-            self._session = async_create_clientsession(self._hass)
+            connector = aiohttp.TCPConnector(resolver=aiohttp.resolver.ThreadedResolver())
+            self._session = aiohttp.ClientSession(connector=connector)
 
         url = f"{SMAPI_BASE_URL}{path}"
         try:

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .api import LWAClient
-from .const import CONF_ALEXA_USER_ID, CONF_CLIENT_ID, CONF_CLIENT_SECRET, CONF_COUNT, CONF_REGION, CONF_REFRESH_TOKEN, CONF_SENDER, DEFAULT_COUNT, DEFAULT_REGION, DEFAULT_SENDER, DOMAIN, SCOPE_SMAPI, SERVICE_SEND
+from .const import CONF_ALEXA_USER_ID, CONF_CLIENT_ID, CONF_CLIENT_SECRET, CONF_COUNT, CONF_REGION, CONF_REFRESH_TOKEN, CONF_SENDER, CONF_SKILL_CLIENT_ID, CONF_SKILL_CLIENT_SECRET, DEFAULT_COUNT, DEFAULT_REGION, DEFAULT_SENDER, DOMAIN, SCOPE_SMAPI, SERVICE_SEND
 from .proactive import ProactiveClient
 from .views import AlexaProactiveView
 
@@ -28,16 +28,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         count = call.data.get(CONF_COUNT, DEFAULT_COUNT)
 
         entries = hass.config_entries.async_entries(DOMAIN)
-        loaded = [e for e in entries if e.state == "loaded"]
-        if not loaded:
+        entry = next((e for e in entries if e.state == ConfigEntryState.LOADED), None)
+        if entry is None:
             raise ServiceValidationError("Alexa Proactive Events integration is not configured")
 
-        entry = loaded[0]
         client: ProactiveClient | None = entry.runtime_data
         if client is None:
             raise ServiceValidationError("Integration not fully initialized")
 
-        user_id = entry.data.get(CONF_ALEXA_USER_ID)
+        user_id = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get(CONF_ALEXA_USER_ID)
         await client.async_send(sender=sender, count=count, user_id=user_id)
 
     hass.services.async_register(DOMAIN, SERVICE_SEND, _handle_send, schema=_SERVICE_SCHEMA)
@@ -52,6 +51,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
     if refresh_token:
         lwa_client.set_refresh_token(SCOPE_SMAPI, refresh_token)
+
+    skill_cid = entry.data.get(CONF_SKILL_CLIENT_ID)
+    skill_csecret = entry.data.get(CONF_SKILL_CLIENT_SECRET)
+    if skill_cid and skill_csecret:
+        lwa_client.set_skill_credentials(skill_cid, skill_csecret)
+
     proactive_client = ProactiveClient(hass, lwa_client, entry.data.get(CONF_REGION, DEFAULT_REGION))
     entry.runtime_data = proactive_client
 

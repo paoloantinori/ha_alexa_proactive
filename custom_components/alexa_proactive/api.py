@@ -1,4 +1,4 @@
-"""OAuth2 client for Amazon LWA with hybrid grant type support."""
+"""OAuth2 client for Amazon LWA."""
 from __future__ import annotations
 
 import logging
@@ -18,22 +18,27 @@ _SMAPI_SCOPE_PARTS = frozenset(SCOPE_SMAPI.split())
 
 
 class LWAClient:
-    """Manages LWA access tokens.
-
-    Uses authorization code flow for SMAPI (needs user identity)
-    and client_credentials for proactive events (service-level scope).
-    """
+    """Manages LWA access tokens for SMAPI and Proactive Events."""
 
     def __init__(self, hass: HomeAssistant, client_id: str, client_secret: str) -> None:
         self._hass = hass
         self._client_id = client_id
         self._client_secret = client_secret
+        self._skill_client_id: str | None = None
+        self._skill_client_secret: str | None = None
         self._session: aiohttp.ClientSession | None = None
         self._tokens: dict[str, _TokenCache] = {}
         self._refresh_tokens: dict[str, str] = {}
 
     def set_refresh_token(self, scope: str, refresh_token: str) -> None:
         self._refresh_tokens[scope] = refresh_token
+
+    def set_skill_credentials(self, client_id: str, client_secret: str) -> None:
+        self._skill_client_id = client_id
+        self._skill_client_secret = client_secret
+
+    def invalidate_token(self, scope: str) -> None:
+        self._tokens.pop(scope, None)
 
     def get_refresh_token(self, scope: str) -> str | None:
         return self._refresh_tokens.get(scope)
@@ -62,12 +67,25 @@ class LWAClient:
         return data
 
     async def async_get_proactive_token(self) -> str:
-        """Return a valid proactive events token (client_credentials grant)."""
+        """Return a valid token for the Proactive Events API.
+
+        Uses client_credentials grant with skill-specific credentials.
+        """
+        if self._skill_client_id is None:
+            raise HomeAssistantError("Skill credentials not configured — reconfigure the integration")
         cached = self._tokens.get(SCOPE_PROACTIVE)
         if cached and time.monotonic() < cached.expires_at:
             return cached.token
 
-        return await self._async_client_credentials(SCOPE_PROACTIVE)
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self._skill_client_id,
+            "client_secret": self._skill_client_secret,
+            "scope": SCOPE_PROACTIVE,
+        }
+        data = await self._async_token_request(payload, "proactive client_credentials")
+        self._store_token(SCOPE_PROACTIVE, data)
+        return data["access_token"]
 
     async def async_get_smapi_token(self) -> str:
         """Return a valid SMAPI token (refresh token or cached)."""
@@ -75,21 +93,9 @@ class LWAClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            from homeassistant.helpers.aiohttp_client import async_create_clientsession
-            self._session = async_create_clientsession(self._hass)
+            connector = aiohttp.TCPConnector(resolver=aiohttp.resolver.ThreadedResolver())
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
-
-    async def _async_client_credentials(self, scope: str) -> str:
-        """Request a token using client_credentials grant."""
-        payload = {
-            "grant_type": "client_credentials",
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
-            "scope": scope,
-        }
-        data = await self._async_token_request(payload, "client_credentials")
-        self._store_token(scope, data)
-        return data["access_token"]
 
     async def _async_get_token(self, scope: str) -> str:
         cached = self._tokens.get(scope)

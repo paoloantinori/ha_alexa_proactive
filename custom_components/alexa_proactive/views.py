@@ -6,6 +6,7 @@ import logging
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.json import json_bytes
 
 from .const import CONF_ALEXA_USER_ID, DOMAIN
 
@@ -34,11 +35,22 @@ class AlexaProactiveView(HomeAssistantView):
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
 
+    @staticmethod
+    def _alexa_json(result: dict) -> web.Response:
+        """Return JSON response without gzip compression.
+
+        HomeAssistantView.json() calls enable_compression() which gzip-compresses
+        the body. Amazon's Alexa skill dispatcher fails to parse compressed responses,
+        causing INVALID_RESPONSE errors on Echo devices.
+        """
+        return web.Response(body=json_bytes(result), content_type="application/json")
+
     async def post(self, request: web.Request) -> web.Response:
+        _LOGGER.warning("Alexa POST received from %s", request.remote)
         try:
             event = await request.json()
         except Exception:
-            return self.json(_speech_response("Sorry, something went wrong."))
+            return self._alexa_json(_speech_response("Sorry, something went wrong."))
 
         req = event.get("request", {})
         request_type = req.get("type", "")
@@ -65,13 +77,14 @@ class AlexaProactiveView(HomeAssistantView):
 
         if handler is None:
             _LOGGER.warning("Unknown request type: %s", request_type)
-            return self.json(_speech_response("Say send notification or check status.", end_session=False, reprompt="What would you like to do?"))
+            return self._alexa_json(_speech_response("Say send notification or check status.", end_session=False, reprompt="What would you like to do?"))
 
         result = handler(req, user_id)
         if user_id and request_type == "LaunchRequest":
             self._store_user_id(user_id)
 
-        return self.json(result)
+        _LOGGER.warning("Alexa responding to %s: %s", request_type, str(result)[:300])
+        return self._alexa_json(result)
 
     def _handle_launch(self, request: dict, user_id: str) -> dict:
         return _speech_response("Welcome to Ping Me! You are set up for proactive notifications.")

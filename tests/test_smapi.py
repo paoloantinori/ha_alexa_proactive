@@ -173,7 +173,10 @@ class TestCreateSkill:
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
         session = _make_mock_session(skill_resp)
 
-        with patch.object(smtp_client, "_session", session):
+        with (
+            patch.object(smtp_client, "_session", session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Trusted")),
+        ):
             result = await smtp_client._async_create_skill(
                 vendor_id="VENDOR123",
                 webhook_url="https://example.com/webhook",
@@ -189,7 +192,10 @@ class TestCreateSkill:
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
         session = _make_mock_session(skill_resp)
 
-        with patch.object(smtp_client, "_session", session):
+        with (
+            patch.object(smtp_client, "_session", session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Trusted")),
+        ):
             await smtp_client._async_create_skill(
                 vendor_id="VENDOR123",
                 webhook_url="https://example.com/webhook",
@@ -204,7 +210,10 @@ class TestCreateSkill:
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
         session = _make_mock_session(skill_resp)
 
-        with patch.object(smtp_client, "_session", session):
+        with (
+            patch.object(smtp_client, "_session", session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Trusted")),
+        ):
             await smtp_client._async_create_skill(
                 vendor_id="VENDOR123",
                 webhook_url="https://example.com/webhook",
@@ -219,7 +228,10 @@ class TestCreateSkill:
         skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
         session = _make_mock_session(skill_resp)
 
-        with patch.object(smtp_client, "_session", session):
+        with (
+            patch.object(smtp_client, "_session", session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Trusted")),
+        ):
             await smtp_client._async_create_skill(
                 vendor_id="VENDOR123",
                 webhook_url="https://example.com/webhook",
@@ -244,7 +256,10 @@ class TestUpdateManifest:
         mock_session = _make_mock_session(_make_mock_response({"status": "SUCCESS"}))
         skill_id = "amzn1.ask.skill.456"
 
-        with patch.object(smtp_client, "_session", mock_session):
+        with (
+            patch.object(smtp_client, "_session", mock_session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Trusted")),
+        ):
             await smtp_client.async_update_manifest(
                 skill_id=skill_id,
                 webhook_url="https://example.com/webhook",
@@ -258,6 +273,8 @@ class TestUpdateManifest:
             "/stages/development/manifest"
         )
         assert call_args[0][1] == expected_url
+        headers = call_args[1].get("headers", {})
+        assert headers.get("If-Match") == "*"
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +286,9 @@ class TestUploadModel:
 
     @pytest.mark.asyncio
     async def test_uploads_model_to_locale(self, smtp_client, const):
-        mock_session = _make_mock_session(_make_mock_response({"status": "SUCCESS"}))
+        get_resp = _make_mock_response({"eTag": "etag-123"})
+        put_resp = _make_mock_response({"status": "SUCCESS"})
+        mock_session = _make_multi_response_session(get_resp, put_resp)
         skill_id = "amzn1.ask.skill.789"
         model = {"interactionModel": {"languageModel": {"intents": []}}}
 
@@ -278,16 +297,20 @@ class TestUploadModel:
                 skill_id=skill_id, locale="en-US", model=model
             )
 
-        call_args = mock_session.request.call_args
+        put_call = mock_session.request.call_args_list[-1]
         expected_url = (
             f"{const.SMAPI_BASE_URL}/v1/skills/{skill_id}"
             "/stages/development/interactionModel/locales/en-US"
         )
-        assert call_args[0][1] == expected_url
+        assert put_call[0][1] == expected_url
+        headers = put_call[1].get("headers", {})
+        assert headers.get("If-Match") == "etag-123"
 
     @pytest.mark.asyncio
-    async def test_uploads_italian_model(self, smtp_client, const):
-        mock_session = _make_mock_session(_make_mock_response({"status": "SUCCESS"}))
+    async def test_uploads_without_etag_when_get_fails(self, smtp_client, const):
+        get_resp = _make_mock_response({"error": "not found"}, status=404)
+        put_resp = _make_mock_response({"status": "SUCCESS"})
+        mock_session = _make_multi_response_session(get_resp, put_resp)
         skill_id = "amzn1.ask.skill.789"
         model = {"interactionModel": {"languageModel": {"intents": []}}}
 
@@ -296,12 +319,12 @@ class TestUploadModel:
                 skill_id=skill_id, locale="it-IT", model=model
             )
 
-        call_args = mock_session.request.call_args
+        put_call = mock_session.request.call_args_list[-1]
         expected_url = (
             f"{const.SMAPI_BASE_URL}/v1/skills/{skill_id}"
             "/stages/development/interactionModel/locales/it-IT"
         )
-        assert call_args[0][1] == expected_url
+        assert put_call[0][1] == expected_url
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +389,10 @@ class TestSetupSkillComplete:
                 new_callable=AsyncMock,
             ) as mock_enable,
             patch.object(
+                smtp_client, "_detect_ssl_type",
+                new=AsyncMock(return_value="Trusted"),
+            ),
+            patch.object(
                 smtp_client, "_async_request",
                 new_callable=AsyncMock, return_value=None,
             ),
@@ -376,7 +403,7 @@ class TestSetupSkillComplete:
 
         mock_vendor.assert_called_once()
         mock_find.assert_called_once_with(vendor_id, "Home Assistant")
-        mock_create.assert_called_once_with(vendor_id, webhook_url, "Home Assistant")
+        mock_create.assert_called_once_with(vendor_id, webhook_url, "Home Assistant", ["en-US"])
         mock_upload.assert_called_once()
         mock_enable.assert_called_once_with(skill_id)
 
@@ -422,6 +449,10 @@ class TestSetupSkillComplete:
                 new_callable=AsyncMock,
             ),
             patch.object(
+                smtp_client, "_detect_ssl_type",
+                new=AsyncMock(return_value="Trusted"),
+            ),
+            patch.object(
                 smtp_client, "_async_request",
                 new_callable=AsyncMock, return_value=None,
             ),
@@ -432,6 +463,121 @@ class TestSetupSkillComplete:
 
         mock_create.assert_called_once()
         mock_resolve.assert_called_once_with(vendor_id, webhook_url, "Home Assistant")
+
+
+# ---------------------------------------------------------------------------
+# Test: async_get_skill_status
+# ---------------------------------------------------------------------------
+
+
+class TestGetSkillStatus:
+
+    @pytest.mark.asyncio
+    async def test_returns_skill_status_data(self, smtp_client, const):
+        status_data = {
+            "interactionModel": {
+                "locales": {
+                    "en-US": {"lastUpdateRequest": {"status": "SUCCEEDED"}},
+                }
+            }
+        }
+        mock_session = _make_mock_session(_make_mock_response(status_data))
+
+        with patch.object(smtp_client, "_session", mock_session):
+            result = await smtp_client.async_get_skill_status("amzn1.ask.skill.123")
+
+        assert result == status_data
+        call_args = mock_session.request.call_args
+        assert call_args[0][0] == "GET"
+        assert "/v1/skills/amzn1.ask.skill.123/status" in call_args[0][1]
+
+
+# ---------------------------------------------------------------------------
+# Test: async_wait_for_model_build
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForModelBuild:
+
+    @pytest.mark.asyncio
+    async def test_returns_succeeded_locales_immediately(self, smtp_client):
+        status = {
+            "interactionModel": {
+                "locales": {
+                    "en-US": {"lastUpdateRequest": {"status": "SUCCEEDED"}},
+                    "it-IT": {"lastUpdateRequest": {"status": "IN_PROGRESS"}},
+                }
+            }
+        }
+        with patch.object(
+            smtp_client, "async_get_skill_status",
+            new_callable=AsyncMock, return_value=status,
+        ):
+            result = await smtp_client.async_wait_for_model_build(
+                "skill1", ["en-US", "it-IT"], timeout=5, poll_interval=0.1,
+            )
+        assert result == ["en-US"]
+
+    @pytest.mark.asyncio
+    async def test_polls_until_success(self, smtp_client):
+        in_progress = {
+            "interactionModel": {
+                "locales": {
+                    "en-US": {"lastUpdateRequest": {"status": "IN_PROGRESS"}},
+                }
+            }
+        }
+        succeeded = {
+            "interactionModel": {
+                "locales": {
+                    "en-US": {"lastUpdateRequest": {"status": "SUCCEEDED"}},
+                }
+            }
+        }
+        with patch.object(
+            smtp_client, "async_get_skill_status",
+            new_callable=AsyncMock, side_effect=[in_progress, succeeded],
+        ):
+            result = await smtp_client.async_wait_for_model_build(
+                "skill1", ["en-US"], timeout=30, poll_interval=0.1,
+            )
+        assert result == ["en-US"]
+
+    @pytest.mark.asyncio
+    async def test_raises_when_all_fail(self, smtp_client, ha_error):
+        status = {
+            "interactionModel": {
+                "locales": {
+                    "en-US": {"lastUpdateRequest": {"status": "FAILED", "errors": [{"message": "bad model"}]}},
+                }
+            }
+        }
+        with patch.object(
+            smtp_client, "async_get_skill_status",
+            new_callable=AsyncMock, return_value=status,
+        ):
+            with pytest.raises(ha_error, match="no locales reached SUCCEEDED"):
+                await smtp_client.async_wait_for_model_build(
+                    "skill1", ["en-US"], timeout=5, poll_interval=0.1,
+                )
+
+    @pytest.mark.asyncio
+    async def test_raises_on_timeout(self, smtp_client, ha_error):
+        in_progress = {
+            "interactionModel": {
+                "locales": {
+                    "en-US": {"lastUpdateRequest": {"status": "IN_PROGRESS"}},
+                }
+            }
+        }
+        with patch.object(
+            smtp_client, "async_get_skill_status",
+            new_callable=AsyncMock, return_value=in_progress,
+        ):
+            with pytest.raises(ha_error, match="timed out"):
+                await smtp_client.async_wait_for_model_build(
+                    "skill1", ["en-US"], timeout=0.3, poll_interval=0.1,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -469,3 +615,118 @@ class TestErrorHandling:
             pytest.raises(ha_error, match="SMAPI request failed"),
         ):
             await smtp_client.async_get_vendor_id()
+
+
+# ---------------------------------------------------------------------------
+# Test: _detect_ssl_type
+# ---------------------------------------------------------------------------
+
+
+class TestDetectSslType:
+
+    @pytest.mark.asyncio
+    async def test_returns_wildcard_for_wildcard_san(self, smtp_client):
+        smtp_client._hass.async_add_executor_job = AsyncMock(side_effect=lambda fn: fn())
+        with patch("ssl.create_default_context") as mock_ctx:
+            mock_sock = MagicMock()
+            mock_ssock = MagicMock()
+            mock_ssock.getpeercert.return_value = {
+                "subjectAltName": (("DNS", "*.example.com"), ("DNS", "example.com")),
+            }
+            mock_ctx.return_value.wrap_socket.return_value.__enter__ = MagicMock(return_value=mock_ssock)
+            mock_ctx.return_value.wrap_socket.return_value.__exit__ = MagicMock(return_value=False)
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_ctx.return_value)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("socket.create_connection") as mock_conn:
+                mock_conn.return_value.__enter__ = MagicMock(return_value=mock_sock)
+                mock_conn.return_value.__exit__ = MagicMock(return_value=False)
+                result = await smtp_client._detect_ssl_type("https://test.example.com/api")
+        assert result == "Wildcard"
+
+    @pytest.mark.asyncio
+    async def test_returns_trusted_for_non_wildcard(self, smtp_client):
+        smtp_client._hass.async_add_executor_job = AsyncMock(side_effect=lambda fn: fn())
+        with patch("ssl.create_default_context") as mock_ctx:
+            mock_sock = MagicMock()
+            mock_ssock = MagicMock()
+            mock_ssock.getpeercert.return_value = {
+                "subjectAltName": (("DNS", "test.example.com"),),
+            }
+            mock_ctx.return_value.wrap_socket.return_value.__enter__ = MagicMock(return_value=mock_ssock)
+            mock_ctx.return_value.wrap_socket.return_value.__exit__ = MagicMock(return_value=False)
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_ctx.return_value)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("socket.create_connection") as mock_conn:
+                mock_conn.return_value.__enter__ = MagicMock(return_value=mock_sock)
+                mock_conn.return_value.__exit__ = MagicMock(return_value=False)
+                result = await smtp_client._detect_ssl_type("https://test.example.com/api")
+        assert result == "Trusted"
+
+    @pytest.mark.asyncio
+    async def test_returns_trusted_on_connection_error(self, smtp_client):
+        smtp_client._hass.async_add_executor_job = AsyncMock(side_effect=lambda fn: fn())
+        with patch("socket.create_connection", side_effect=OSError("connection refused")):
+            result = await smtp_client._detect_ssl_type("https://unreachable.example.com/api")
+        assert result == "Trusted"
+
+    @pytest.mark.asyncio
+    async def test_returns_trusted_for_no_hostname(self, smtp_client):
+        smtp_client._hass.async_add_executor_job = AsyncMock(side_effect=lambda fn: fn())
+        result = await smtp_client._detect_ssl_type("no-host")
+        assert result == "Trusted"
+
+
+# ---------------------------------------------------------------------------
+# Test: manifest per-region endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestManifestRegions:
+
+    @pytest.mark.asyncio
+    async def test_apis_custom_has_per_region_endpoints(self, smtp_client):
+        skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
+        session = _make_mock_session(skill_resp)
+
+        with (
+            patch.object(smtp_client, "_session", session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Trusted")),
+        ):
+            await smtp_client._async_create_skill(
+                vendor_id="VENDOR123",
+                webhook_url="https://example.com/webhook",
+                skill_name="Home Assistant",
+            )
+
+        body = session.request.call_args[1].get("json") or session.request.call_args.kwargs.get("json")
+        custom = body["manifest"]["apis"]["custom"]
+        assert "regions" in custom
+        assert "EU" in custom["regions"]
+        assert "NA" in custom["regions"]
+        assert "FE" in custom["regions"]
+        assert custom["regions"]["EU"]["endpoint"]["uri"] == "https://example.com/webhook"
+
+    @pytest.mark.asyncio
+    async def test_manifest_uses_wildcard_ssl_type(self, smtp_client):
+        skill_resp = _make_mock_response({"skillId": "amzn1.ask.skill.123"})
+        session = _make_mock_session(skill_resp)
+
+        with (
+            patch.object(smtp_client, "_session", session),
+            patch.object(smtp_client, "_detect_ssl_type", new=AsyncMock(return_value="Wildcard")),
+        ):
+            await smtp_client._async_create_skill(
+                vendor_id="VENDOR123",
+                webhook_url="https://wild.example.com/webhook",
+                skill_name="Home Assistant",
+            )
+
+        body = session.request.call_args[1].get("json") or session.request.call_args.kwargs.get("json")
+        custom = body["manifest"]["apis"]["custom"]
+        assert custom["endpoint"]["sslCertificateType"] == "Wildcard"
+        assert custom["regions"]["EU"]["endpoint"]["sslCertificateType"] == "Wildcard"
+        events = body["manifest"]["events"]
+        assert events["endpoint"]["sslCertificateType"] == "Wildcard"
+        assert events["regions"]["NA"]["endpoint"]["sslCertificateType"] == "Wildcard"

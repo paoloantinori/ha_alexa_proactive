@@ -16,6 +16,8 @@ from .const import (
     CONF_LOCALES,
     CONF_REFRESH_TOKEN,
     CONF_REGION,
+    CONF_SKILL_CLIENT_ID,
+    CONF_SKILL_CLIENT_SECRET,
     CONF_SKILL_ID,
     CONF_VENDOR_ID,
     CONF_WEBHOOK_URL,
@@ -44,8 +46,6 @@ _LOCALE_OPTIONS = [
     for code, label in LOCALE_LABELS.items()
 ]
 
-_DEFAULT_CLIENT_ID = "YOUR_CLIENT_ID_HERE"
-_DEFAULT_CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
 
 
 class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -58,6 +58,7 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._invocation_name: str = DEFAULT_INVOCATION_NAME
         self._selected_locales: list[str] = []
         self._setup_result: dict | None = None
+        self._skill_creds: dict | None = None
         self._lwa_client: LWAClient | None = None
 
     async def async_step_user(self, user_input: dict | None = None):
@@ -77,8 +78,8 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_auth_smapi()
 
         schema = vol.Schema({
-            vol.Required(CONF_CLIENT_ID, default=_DEFAULT_CLIENT_ID): str,
-            vol.Required(CONF_CLIENT_SECRET, default=_DEFAULT_CLIENT_SECRET): str,
+            vol.Required(CONF_CLIENT_ID): str,
+            vol.Required(CONF_CLIENT_SECRET): str,
             vol.Required(CONF_REGION, default=DEFAULT_REGION): SelectSelector(
                 SelectSelectorConfig(options=_REGION_OPTIONS, mode=SelectSelectorMode.DROPDOWN)
             ),
@@ -131,8 +132,13 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._setup_result = await smapi_client.async_setup_skill_complete(
                 webhook_url=webhook_url, models=models, skill_name=self._invocation_name,
             )
+            skill_id = self._setup_result["skill_id"]
+            self._skill_creds = await smapi_client.async_get_skill_credentials(skill_id)
         except HomeAssistantError as err:
             _LOGGER.warning("SMAPI setup failed: %s", err)
+            return self.async_show_form(step_id="setup", errors={"base": "smapi_error"})
+        except Exception as err:
+            _LOGGER.exception("Unexpected error during SMAPI setup: %s", err)
             return self.async_show_form(step_id="setup", errors={"base": "smapi_error"})
 
         return await self.async_step_finish()
@@ -140,6 +146,7 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_finish(self, user_input: dict | None = None):
         if user_input is not None:
             refresh_token = self._lwa_client.get_refresh_token(SCOPE_SMAPI) or ""
+
             return self.async_create_entry(
                 title="Alexa Proactive Events",
                 data={
@@ -152,10 +159,15 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_VENDOR_ID: self._setup_result["vendor_id"],
                     CONF_WEBHOOK_URL: self._setup_result["webhook_url"],
                     CONF_REFRESH_TOKEN: refresh_token,
+                    CONF_SKILL_CLIENT_ID: (self._skill_creds or {}).get("client_id"),
+                    CONF_SKILL_CLIENT_SECRET: (self._skill_creds or {}).get("client_secret"),
                 },
             )
 
-        return self.async_show_form(step_id="finish")
+        return self.async_show_form(
+            step_id="finish",
+            description_placeholders={"invocation_name": self._invocation_name},
+        )
 
     @staticmethod
     @callback
@@ -208,6 +220,35 @@ class AlexaProactiveOptionsFlow(config_entries.OptionsFlow):
         self._config_entry = config_entry
 
     async def async_step_init(self, user_input: dict | None = None):
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-        return self.async_show_form(step_id="init")
+            new_name = user_input[CONF_INVOCATION_NAME].strip()
+            old_name = self._config_entry.data.get(CONF_INVOCATION_NAME, DEFAULT_INVOCATION_NAME)
+
+            if new_name != old_name:
+                try:
+                    lwa_client = LWAClient(self.hass, self._config_entry.data[CONF_CLIENT_ID], self._config_entry.data[CONF_CLIENT_SECRET])
+                    refresh_token = self._config_entry.data.get(CONF_REFRESH_TOKEN)
+                    if refresh_token:
+                        lwa_client.set_refresh_token(SCOPE_SMAPI, refresh_token)
+                    smapi_client = SMTPClient(self.hass, lwa_client)
+                    await smapi_client.async_update_manifest(
+                        self._config_entry.data[CONF_SKILL_ID],
+                        self._config_entry.data[CONF_WEBHOOK_URL],
+                        new_name,
+                    )
+                    self.hass.config_entries.async_update_entry(
+                        self._config_entry, data={**self._config_entry.data, CONF_INVOCATION_NAME: new_name}
+                    )
+                except HomeAssistantError as err:
+                    _LOGGER.warning("Failed to update skill name: %s", err)
+                    errors["base"] = "smapi_error"
+
+            if not errors:
+                return self.async_create_entry(title="", data={CONF_INVOCATION_NAME: new_name})
+
+        current_name = self._config_entry.data.get(CONF_INVOCATION_NAME, DEFAULT_INVOCATION_NAME)
+        schema = vol.Schema({
+            vol.Required(CONF_INVOCATION_NAME, default=current_name): str,
+        })
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

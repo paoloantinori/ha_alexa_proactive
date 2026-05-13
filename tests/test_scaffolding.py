@@ -64,8 +64,8 @@ class TestConstants:
         assert "amazonalexa.com" in const.PROACTIVE_API_URLS["eu"]
 
     def test_scopes(self, const):
-        assert "proactive_events" in const.SCOPE_PROACTIVE
         assert "skills:readwrite" in const.SCOPE_SMAPI
+        assert "models:readwrite" in const.SCOPE_SMAPI
 
     def test_config_keys(self, const):
         assert const.CONF_CLIENT_ID == "client_id"

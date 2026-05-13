@@ -4,11 +4,11 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 ## How It Works
 
-1. **Config Flow**: Enter your Amazon Developer LWA credentials, authorize via Amazon login, and the integration automatically creates an Alexa skill via SMAPI with interaction models for your selected locales.
+1. **Config Flow**: Enter your Amazon Developer LWA credentials, authorize via Amazon login, and the integration automatically creates an Alexa skill via SMAPI with interaction models for your selected locales. Skill-specific credentials are fetched automatically for sending notifications at runtime.
 
 2. **Skill Endpoint**: A custom HTTP view acts as the Alexa skill endpoint, handling Launch, Intent, and SessionEnded requests.
 
-3. **Proactive Notifications**: Call the `alexa_proactive.send` service from any automation to push a notification to your Alexa devices. Alexa shows a yellow ring and announces "You have N messages from [sender]."
+3. **Proactive Notifications**: Call the `alexa_proactive.send` service from any automation to push a notification to your Alexa devices. Notifications use a service-level `client_credentials` grant (separate from the user authorization), so no user login is needed at runtime. Alexa shows a yellow ring and announces the notification in the format: **"You have N messages from [skill name]: [message]."**
 
 ## Prerequisites
 
@@ -40,8 +40,8 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 2. Click **Add Integration** and search for "Alexa Proactive Events"
 3. **Step 1 — Credentials**: Enter your LWA Client ID, Client Secret, select your Alexa API region (EU, NA, or FE), optionally customize the invocation name and select locales (auto-detected from your HA country/language settings)
 4. **Step 2 — Authorize**: Click the authorization link, sign in with your Amazon Developer account, and approve. Return to HA and submit.
-5. **Step 3 — Skill Setup**: The integration automatically creates the Alexa skill via SMAPI and uploads interaction models for all selected locales
-6. **Step 4 — Activate**: On your Alexa app, enable the skill. Say "Alexa, open [invocation name]" to link your account.
+5. **Step 3 — Skill Setup**: The integration automatically creates the Alexa skill via SMAPI, uploads interaction models for all selected locales concurrently, fetches skill-specific credentials for runtime notifications, and attempts to enable the skill. Enablement may fail if the model hasn't finished processing yet — in that case, enable it manually (see step 6).
+6. **Step 4 — Activate**: After setup completes, open the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask), find your skill, and click **Enable** if it's not already enabled. Then say "Alexa, open [invocation name]" on your device to link your account and capture your user ID for unicast notifications.
 
 ## Usage
 
@@ -49,8 +49,18 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `sender` | string | `"Home Assistant"` | Name shown in the notification |
+| `sender` | string | `"Home Assistant"` | Message text shown after the skill name in the notification |
 | `count` | integer | `1` | Number of unread messages (1–99) |
+
+### Notification Format
+
+When a notification is sent, Alexa shows a yellow ring and announces:
+
+> "You have `[count]` messages from `[skill name]`: `[sender]`"
+
+Where:
+- **skill name** — the invocation name set during configuration (editable via Options)
+- **sender** — the message text you provide in the service call
 
 ### Automation Examples
 
@@ -128,9 +138,14 @@ automation:
 - Check the Home Assistant logs for the specific SMAPI error
 
 **Alexa doesn't show the yellow ring**
-- Ensure you've enabled the skill in the Alexa app
+- Ensure you've enabled the skill in the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) — the automatic enablement step may fail if the interaction model hasn't finished processing. If you see "Skill is not ready for enablement" in the logs, just enable it manually in the console.
 - Say "Alexa, open [invocation name]" to trigger user ID capture
 - Verify your HA external URL is reachable from the internet
+
+**"Alexa says there was a problem" / INVALID_RESPONSE when opening the skill**
+- Ensure your HA external URL uses HTTPS with a valid SSL certificate
+- If using a **wildcard SSL certificate** (e.g. `*.yourdomain.com`), the integration auto-detects this and configures the manifest correctly. If you manually updated the skill manifest, make sure `sslCertificateType` is set to `"Wildcard"` (not `"Trusted"`)
+- The integration registers per-region endpoints (NA, EU, FE) in the skill manifest. This is required for Echo devices to reach the skill endpoint — proactive notifications work without them, but skill invocation ("Alexa, open [name]") does not
 
 ## Architecture
 
@@ -142,9 +157,9 @@ custom_components/alexa_proactive/
 ├── const.py           # Constants (URLs, scopes, locale maps)
 ├── manifest.json      # HA integration metadata
 ├── models.py          # Alexa interaction models (17 locales)
-├── proactive.py       # Proactive Events API client
+├── proactive.py       # Proactive Events API client (retries with cache invalidation)
 ├── services.yaml      # Service definition for HA UI
-├── smapi.py           # SMAPI client for skill CRUD
+├── smapi.py           # SMAPI client for skill CRUD, concurrent model uploads
 ├── strings.json       # Config flow UI strings
 ├── translations/
 │   └── en.json        # English translations

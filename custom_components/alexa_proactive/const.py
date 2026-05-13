@@ -28,10 +28,12 @@ CONF_WEBHOOK_URL = "webhook_url"
 CONF_ALEXA_USER_ID = "alexa_user_id"
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_LOCALES = "locales"
+CONF_SKILL_CLIENT_ID = "skill_client_id"
+CONF_SKILL_CLIENT_SECRET = "skill_client_secret"
 
 # LWA OAuth2 scopes
-SCOPE_PROACTIVE = "alexa::proactive_events"
 SCOPE_SMAPI = "alexa::ask:skills:readwrite alexa::ask:models:readwrite"
+SCOPE_PROACTIVE = "alexa::proactive_events"
 
 # Service names and fields
 SERVICE_SEND = "send"
