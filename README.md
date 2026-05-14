@@ -14,10 +14,12 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 1. **Amazon Developer Account**: Create one at [developer.amazon.com](https://developer.amazon.com)
 
-2. **LWA Security Profile**: Create one at the [Security Profiles console](https://developer.amazon.com/settings/console/securityprofile/overview.html) ([docs](https://developer.amazon.com/docs/login-with-amazon/security-profile.html)). You need two things from this profile:
+2. **LWA Security Profile**: Create one at the [Security Profiles console](https://developer.amazon.com/settings/console/securityprofile/overview.html) ([docs](https://developer.amazon.com/docs/login-with-amazon/security-profile.html)). You need **three things** from this profile:
 
    - **Client ID** and **Client Secret** — found under the Web Settings tab
    - **Allowed Return URLs** — add your HA external URL followed by `/auth/alexa_proactive/callback` (e.g. `https://my-ha.duckdns.org:8123/auth/alexa_proactive/callback`)
+
+   > ⚠️ **Important**: If you skip this step, the authorization will fail with a "redirect URI not whitelisted" error. The exact URL you need will also be shown during setup.
 
 3. **Home Assistant External URL**: Must be configured (`Settings > System > Network`) so Alexa can reach the skill endpoint. This typically requires a Nabu Casa subscription, a reverse proxy, or another tunneling solution.
 

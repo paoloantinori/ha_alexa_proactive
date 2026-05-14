@@ -14,7 +14,7 @@
       },
       "auth_smapi": {
         "title": "Authorize Skill Management",
-        "description": "1. Open [this link]({auth_url}) to authorize skill management.\n2. Sign in with your Amazon Developer account and approve.\n3. Return here and click Submit.",
+        "description": "**Before proceeding**, add this URL to your LWA Security Profile's **Allowed Return URLs** (under Web Settings):\n\n`{callback_url}`\n\n1. Open [this link]({auth_url}) to authorize skill management.\n2. Sign in with your Amazon Developer account and approve.\n3. Return here and click Submit.",
         "data": {}
       },
       "setup": {

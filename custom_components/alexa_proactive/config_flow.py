@@ -119,7 +119,10 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="auth_smapi",
             errors=errors,
-            description_placeholders={"auth_url": auth_url},
+            description_placeholders={
+                "auth_url": auth_url,
+                "callback_url": redirect_uri,
+            },
         )
 
     async def async_step_setup(self, _user_input: dict | None = None):
