@@ -1,6 +1,4 @@
 {
   "name": "Alexa Proactive Events",
-  "content_in_root": false,
-  "zip_release": true,
-  "filename": "alexa_proactive.zip"
+  "content_in_root": false
 }
