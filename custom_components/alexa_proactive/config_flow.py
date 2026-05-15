@@ -30,7 +30,7 @@ from .const import (
     LOCALE_LABELS,
     SCOPE_SMAPI,
 )
-from .models import get_model
+from .models import get_default_invocation, get_model
 from .smapi import SMTPClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,14 +77,17 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._lwa_client = LWAClient(self.hass, self._client_id, self._client_secret)
             return await self.async_step_auth_smapi()
 
+        suggested_locales = self._get_suggested_locales()
+        default_invocation = get_default_invocation(suggested_locales[0]) if suggested_locales else DEFAULT_INVOCATION_NAME
+
         schema = vol.Schema({
             vol.Required(CONF_CLIENT_ID): str,
             vol.Required(CONF_CLIENT_SECRET): str,
             vol.Required(CONF_REGION, default=DEFAULT_REGION): SelectSelector(
                 SelectSelectorConfig(options=_REGION_OPTIONS, mode=SelectSelectorMode.DROPDOWN)
             ),
-            vol.Optional(CONF_INVOCATION_NAME, default=DEFAULT_INVOCATION_NAME): str,
-            vol.Optional(CONF_LOCALES, default=self._get_suggested_locales()): SelectSelector(
+            vol.Optional(CONF_INVOCATION_NAME, default=default_invocation): str,
+            vol.Optional(CONF_LOCALES, default=suggested_locales): SelectSelector(
                 SelectSelectorConfig(options=_LOCALE_OPTIONS, multiple=True, sort=True)
             ),
         })

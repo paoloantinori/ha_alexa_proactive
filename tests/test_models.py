@@ -137,7 +137,7 @@ class TestEnUSModel:
 class TestItITModel:
 
     def test_invocation_name(self, it_it):
-        assert it_it["interactionModel"]["languageModel"]["invocationName"] == "ping me"
+        assert it_it["interactionModel"]["languageModel"]["invocationName"] == "manda avviso"
 
     def test_has_send_notification_intent_with_italian_samples(self, it_it):
         names = _intent_names(it_it)
@@ -174,15 +174,15 @@ class TestGetModel:
 
     def test_returns_it_it_with_default_invocation(self, models, it_it):
         result = models.get_model("it-IT")
-        assert result["interactionModel"]["languageModel"]["invocationName"] == "ping me"
+        assert result["interactionModel"]["languageModel"]["invocationName"] == "manda avviso"
 
     def test_custom_invocation_name_en_us(self, models):
         result = models.get_model("en-US", invocation_name="notify me")
         assert result["interactionModel"]["languageModel"]["invocationName"] == "notify me"
 
     def test_custom_invocation_name_it_it(self, models):
-        result = models.get_model("it-IT", invocation_name="avvisami")
-        assert result["interactionModel"]["languageModel"]["invocationName"] == "avvisami"
+        result = models.get_model("it-IT", invocation_name="notificami")
+        assert result["interactionModel"]["languageModel"]["invocationName"] == "notificami"
 
     def test_does_not_mutate_template(self, models):
         original = models.MODELS["en-US"]["interactionModel"]["languageModel"]["invocationName"]

@@ -6,6 +6,26 @@ from .const import LOCALE_LABELS
 
 SUPPORTED_LOCALES = list(LOCALE_LABELS)
 
+LOCALE_INVOCATION_NAMES: dict[str, str] = {
+    "ar-SA": "نبّه منزلي",
+    "de-DE": "informier mich",
+    "en-AU": "ping me",
+    "en-CA": "ping me",
+    "en-GB": "ping me",
+    "en-IN": "ping me",
+    "en-US": "ping me",
+    "es-ES": "aviso rápido",
+    "es-MX": "aviso rápido",
+    "es-US": "aviso rápido",
+    "fr-CA": "préviens moi",
+    "fr-FR": "préviens moi",
+    "hi-IN": "सूचना दो",
+    "it-IT": "manda avviso",
+    "ja-JP": "おしらせ",
+    "nl-NL": "waarschuw me",
+    "pt-BR": "me avise",
+}
+
 _STANDARD_INTENTS = [
     {"name": "AMAZON.NavigateHomeIntent", "samples": []},
     {"name": "AMAZON.HelpIntent", "samples": []},
@@ -254,15 +274,20 @@ _LOCALE_UTTERANCES: dict[str, dict[str, list[str]]] = {
 }
 
 MODELS = {
-    locale: _build_model("ping me", u["send"], u["check"])
+    locale: _build_model(LOCALE_INVOCATION_NAMES[locale], u["send"], u["check"])
     for locale, u in _LOCALE_UTTERANCES.items()
 }
 
 _DEFAULT_INVOCATION = "ping me"
 
 
-def get_model(locale: str, invocation_name: str = _DEFAULT_INVOCATION) -> dict:
-    if invocation_name == _DEFAULT_INVOCATION:
+def get_default_invocation(locale: str) -> str:
+    return LOCALE_INVOCATION_NAMES.get(locale, _DEFAULT_INVOCATION)
+
+
+def get_model(locale: str, invocation_name: str | None = None) -> dict:
+    default = get_default_invocation(locale)
+    if invocation_name is None or invocation_name == default:
         return MODELS[locale]
     model = copy.deepcopy(MODELS[locale])
     model["interactionModel"]["languageModel"]["invocationName"] = invocation_name
