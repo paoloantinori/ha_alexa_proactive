@@ -270,6 +270,23 @@ class SMTPClient:
         except HomeAssistantError as err:
             _LOGGER.warning("Failed to update manifest (non-fatal): %s", err)
 
+        # Wait for Amazon to finish building the interaction model before
+        # enabling. Enablement 403s ("Custom skills must have an interaction
+        # model") if attempted before the async build completes.
+        try:
+            built_locales = await self.async_wait_for_model_build(
+                skill_id, upload_locales
+            )
+            _LOGGER.warning(
+                "Interaction model build SUCCEEDED for %s; proceeding to enable",
+                built_locales,
+            )
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Model build did not complete in time (will still try to enable): %s",
+                err,
+            )
+
         try:
             await self.async_enable_skill(skill_id)
         except HomeAssistantError as err:
