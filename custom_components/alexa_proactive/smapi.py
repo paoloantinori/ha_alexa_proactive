@@ -177,7 +177,11 @@ class SMTPClient:
                 await asyncio.sleep(poll_interval)
                 continue
 
-            locale_statuses = data.get("interactionModel", {}).get("locales", {})
+            # SMAPI returns locales either under interactionModel.locales.{locale}
+            # (documented) or directly under interactionModel.{locale} (observed
+            # in practice). Handle both so we don't miss a SUCCEEDED build.
+            interaction = data.get("interactionModel", {})
+            locale_statuses = interaction.get("locales") or interaction
             succeeded: list[str] = []
             failed: list[str] = []
             pending: list[str] = []
