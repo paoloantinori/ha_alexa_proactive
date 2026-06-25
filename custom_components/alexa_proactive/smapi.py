@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 
@@ -161,7 +162,7 @@ class SMTPClient:
         self,
         skill_id: str,
         locales: list[str],
-        timeout: float = 60.0,
+        timeout: float = 180.0,
         poll_interval: float = 5.0,
     ) -> list[str]:
         """Poll skill status until at least one locale build reaches SUCCEEDED."""
@@ -170,6 +171,7 @@ class SMTPClient:
         while time.monotonic() < deadline:
             try:
                 data = await self.async_get_skill_status(skill_id)
+                _LOGGER.warning("RAW skill status for %s: %s", skill_id, json.dumps(data))
             except HomeAssistantError as err:
                 _LOGGER.warning("Skill status poll failed (will retry): %s", err)
                 await asyncio.sleep(poll_interval)
