@@ -23,7 +23,7 @@
       },
       "finish": {
         "title": "Setup complete!",
-        "description": "Your Alexa Proactive Events integration is ready.\n\n**Important:** Go to the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) and enable your skill, then say \"Alexa, open {invocation_name}\" on your device to link your account.\n\nUse the `alexa_proactive.send` service in automations to send notifications."
+        "description": "{build_warning}Your Alexa Proactive Events integration is ready.\n\n**Important:** Go to the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) and enable your skill, then say \"Alexa, open {invocation_name}\" on your device to link your account.\n\nUse the `alexa_proactive.send` service in automations to send notifications."
       }
     },
     "error": {

@@ -147,6 +147,13 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected error during SMAPI setup: %s", err)
             return self.async_show_form(step_id="setup", errors={"base": "smapi_error"})
 
+        self._build_timeout = not self._setup_result.get("build_succeeded", True)
+        if self._build_timeout:
+            _LOGGER.warning(
+                "Skill %s created but model build timed out — showing warning to user",
+                skill_id,
+            )
+
         return await self.async_step_finish()
 
     async def async_step_finish(self, user_input: dict | None = None):
@@ -170,9 +177,21 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
+        build_warning = ""
+        if getattr(self, "_build_timeout", False):
+            build_warning = (
+                "⚠️ **The skill was created, but the interaction model build "
+                "timed out.** It may still be building on Amazon's side. "
+                "You can finish setup now, but if proactive notifications don't "
+                "work, re-run setup or enable the skill manually in the "
+                "[Alexa Developer Console](https://developer.amazon.com/alexa/console/ask).\n\n"
+            )
         return self.async_show_form(
             step_id="finish",
-            description_placeholders={"invocation_name": self._invocation_name},
+            description_placeholders={
+                "invocation_name": self._invocation_name,
+                "build_warning": build_warning,
+            },
         )
 
     @staticmethod

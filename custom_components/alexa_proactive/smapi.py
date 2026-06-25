@@ -275,6 +275,7 @@ class SMTPClient:
         # Wait for Amazon to finish building the interaction model before
         # enabling. Enablement 403s ("Custom skills must have an interaction
         # model") if attempted before the async build completes.
+        build_succeeded = True
         try:
             built_locales = await self.async_wait_for_model_build(
                 skill_id, upload_locales
@@ -284,6 +285,7 @@ class SMTPClient:
                 built_locales,
             )
         except HomeAssistantError as err:
+            build_succeeded = False
             _LOGGER.warning(
                 "Model build did not complete in time (will still try to enable): %s",
                 err,
@@ -294,7 +296,12 @@ class SMTPClient:
         except HomeAssistantError as err:
             _LOGGER.warning("Failed to enable skill %s (will need manual enable in Alexa app): %s", skill_id, err)
 
-        return {"skill_id": skill_id, "vendor_id": vendor_id, "webhook_url": webhook_url}
+        return {
+            "skill_id": skill_id,
+            "vendor_id": vendor_id,
+            "webhook_url": webhook_url,
+            "build_succeeded": build_succeeded,
+        }
 
     async def _async_find_existing_skill(self, vendor_id: str, skill_name: str) -> str | None:
         """Check if a skill with the given name already exists."""
