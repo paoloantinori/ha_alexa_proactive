@@ -396,6 +396,11 @@ class TestSetupSkillComplete:
                 smtp_client, "_async_request",
                 new_callable=AsyncMock, return_value=None,
             ),
+            patch.object(
+                smtp_client, "async_wait_for_model_build",
+                new_callable=AsyncMock, return_value=["en-US"],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await smtp_client.async_setup_skill_complete(
                 webhook_url=webhook_url, models=models,
@@ -411,7 +416,58 @@ class TestSetupSkillComplete:
             "skill_id": skill_id,
             "vendor_id": vendor_id,
             "webhook_url": webhook_url,
+            "build_succeeded": True,
         }
+
+    @pytest.mark.asyncio
+    async def test_setup_survives_build_timeout(self, smtp_client, ha_error):
+        """A model-build timeout sets build_succeeded=False but still enables
+        the skill (the config flow surfaces the manual-enable warning)."""
+        webhook_url = "https://example.com/webhook"
+        skill_id = "amzn1.ask.skill.222"
+        models = {
+            "en-US": {"interactionModel": {"languageModel": {"intents": []}}}
+        }
+
+        with (
+            patch.object(
+                smtp_client, "async_get_vendor_id",
+                new_callable=AsyncMock, return_value="VENDOR789",
+            ),
+            patch.object(
+                smtp_client, "_async_find_existing_skill",
+                new_callable=AsyncMock, return_value=skill_id,
+            ),
+            patch.object(
+                smtp_client, "async_upload_model",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                smtp_client, "async_enable_skill",
+                new_callable=AsyncMock,
+            ) as mock_enable,
+            patch.object(
+                smtp_client, "_detect_ssl_type",
+                new=AsyncMock(return_value="Trusted"),
+            ),
+            patch.object(
+                smtp_client, "_async_request",
+                new_callable=AsyncMock, return_value=None,
+            ),
+            patch.object(
+                smtp_client, "async_wait_for_model_build",
+                new_callable=AsyncMock,
+                side_effect=ha_error("Model build timed out after 180s"),
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await smtp_client.async_setup_skill_complete(
+                webhook_url=webhook_url, models=models,
+            )
+
+        mock_enable.assert_called_once_with(skill_id)
+        assert result["skill_id"] == skill_id
+        assert result["build_succeeded"] is False
 
     @pytest.mark.asyncio
     async def test_setup_falls_back_on_conflict(self, smtp_client, ha_error):
@@ -456,6 +512,11 @@ class TestSetupSkillComplete:
                 smtp_client, "_async_request",
                 new_callable=AsyncMock, return_value=None,
             ),
+            patch.object(
+                smtp_client, "async_wait_for_model_build",
+                new_callable=AsyncMock, return_value=["en-US"],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await smtp_client.async_setup_skill_complete(
                 webhook_url=webhook_url, models=models,
@@ -463,6 +524,8 @@ class TestSetupSkillComplete:
 
         mock_create.assert_called_once()
         mock_resolve.assert_called_once_with(vendor_id, webhook_url, "Home Assistant")
+        assert result["skill_id"] == "amzn1.ask.skill.conflict"
+        assert result["build_succeeded"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -730,3 +793,48 @@ class TestManifestRegions:
         events = body["manifest"]["events"]
         assert events["endpoint"]["sslCertificateType"] == "Wildcard"
         assert events["regions"]["NA"]["endpoint"]["sslCertificateType"] == "Wildcard"
+
+
+# ---------------------------------------------------------------------------
+# Test: async_upload_models (options-flow rename)
+# ---------------------------------------------------------------------------
+
+
+class TestUploadModels:
+
+    @pytest.mark.asyncio
+    async def test_uploads_model_for_each_locale(self, smtp_client):
+        with (
+            patch.object(
+                smtp_client, "async_upload_model",
+                new_callable=AsyncMock,
+            ) as mock_upload,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            uploaded = await smtp_client.async_upload_models(
+                "amzn1.ask.skill.123", "notify me", ["en-US", "it-IT"]
+            )
+
+        assert uploaded == ["en-US", "it-IT"]
+        assert mock_upload.await_count == 2
+        locales = [c.kwargs["locale"] for c in mock_upload.await_args_list]
+        assert locales == ["en-US", "it-IT"]
+        for call in mock_upload.await_args_list:
+            assert call.kwargs["model"]["interactionModel"]["languageModel"]["invocationName"] == "notify me"
+
+    @pytest.mark.asyncio
+    async def test_retries_then_reports_partial_failure(self, smtp_client, ha_error):
+        upload = AsyncMock(
+            side_effect=[ha_error("boom"), None, ha_error("boom"), ha_error("boom"), ha_error("boom")]
+        )
+        with (
+            patch.object(smtp_client, "async_upload_model", new=upload),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            uploaded = await smtp_client.async_upload_models(
+                "amzn1.ask.skill.123", "notify me", ["en-US", "it-IT"]
+            )
+
+        # en-US: fail once then succeed (2 calls); it-IT: exhausts 3 attempts.
+        assert uploaded == ["en-US"]
+        assert upload.await_count == 5

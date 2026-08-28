@@ -283,6 +283,17 @@ class AlexaProactiveOptionsFlow(config_entries.OptionsFlow):
                         self._config_entry.data[CONF_WEBHOOK_URL],
                         new_name,
                     )
+                    # The invocation name lives in the interaction model, so a
+                    # manifest-only rename would never change what users say.
+                    uploaded = await smapi_client.async_upload_models(
+                        self._config_entry.data[CONF_SKILL_ID],
+                        new_name,
+                        self._config_entry.data.get(CONF_LOCALES, [DEFAULT_LOCALE]),
+                    )
+                    if not uploaded:
+                        raise HomeAssistantError(
+                            "Rename failed: no interaction model could be uploaded"
+                        )
                     self.hass.config_entries.async_update_entry(
                         self._config_entry, data={**self._config_entry.data, CONF_INVOCATION_NAME: new_name}
                     )

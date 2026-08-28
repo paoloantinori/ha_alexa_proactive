@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -43,7 +44,9 @@ class TestManifest:
         assert manifest_data["config_flow"] is True
         assert manifest_data["integration_type"] == "service"
         assert manifest_data["iot_class"] == "cloud_push"
-        assert manifest_data["version"] == "0.1.0"
+        # Drift-proof: validate the format instead of pinning a version that
+        # goes stale on every bump.
+        assert re.fullmatch(r"\d+\.\d+\.\d+", manifest_data["version"])
         assert "@pantinor" in manifest_data["codeowners"]
 
     def test_manifest_requirements_is_list(self, manifest_data):

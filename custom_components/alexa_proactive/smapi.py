@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .api import LWAClient
 from .const import EVENT_SCHEMA, LOCALE_LABELS, SMAPI_BASE_URL
+from .models import get_model
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,6 +122,33 @@ class SMTPClient:
             json={"manifest": manifest},
             headers={"If-Match": "*"},
         )
+
+    async def async_upload_models(self, skill_id: str, invocation_name: str, locales: list[str]) -> list[str]:
+        """Upload interaction models carrying a new invocation name.
+
+        The invocation name users say lives in the interaction model, not in
+        the manifest that async_update_manifest replaces; the options-flow
+        rename needs both. Retry pattern mirrors async_setup_skill_complete.
+        Returns the locales that uploaded successfully.
+        """
+        _MAX_RETRIES = 2
+        uploaded: list[str] = []
+        for locale in locales:
+            model = get_model(locale, invocation_name)
+            for attempt in range(_MAX_RETRIES + 1):
+                try:
+                    await self.async_upload_model(skill_id, model=model, locale=locale)
+                    uploaded.append(locale)
+                    break
+                except HomeAssistantError as err:
+                    if attempt < _MAX_RETRIES:
+                        await asyncio.sleep(2)
+                    else:
+                        _LOGGER.warning(
+                            "Failed to upload model for %s after %d attempts: %s",
+                            locale, _MAX_RETRIES + 1, err,
+                        )
+        return uploaded
 
     async def async_upload_model(self, skill_id: str, locale: str, model: dict) -> None:
         headers: dict[str, str] = {}

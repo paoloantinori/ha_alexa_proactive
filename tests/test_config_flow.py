@@ -554,6 +554,24 @@ class TestOptionsFlowInvocationName:
         )
 
     @pytest.mark.asyncio
+    async def test_rename_upload_failure_shows_error(self, config_flow_mod, hass, ha_error):
+        """When no interaction model uploads, the rename must not be recorded."""
+        entry = self._make_entry()
+        flow = self._make_options_flow(config_flow_mod, hass, entry)
+
+        with (
+            patch("alexa_proactive.config_flow.LWAClient") as mock_lwa_cls,
+            patch("alexa_proactive.config_flow.SMTPClient", autospec=True) as mock_smapi_cls,
+        ):
+            mock_lwa_cls.return_value = MagicMock()
+            mock_smapi_cls.return_value.async_upload_models = AsyncMock(return_value=[])
+            await flow.async_step_init({"invocation_name": "notify me"})
+
+        assert _extract_form_errors(flow) == {"base": "smapi_error"}
+        hass.config_entries.async_update_entry.assert_not_called()
+        flow.async_create_entry.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_rename_normalizes_and_preserves_user_id(self, config_flow_mod, hass, ha_error):
         entry = self._make_entry()
         flow = self._make_options_flow(config_flow_mod, hass, entry)
@@ -567,6 +585,9 @@ class TestOptionsFlowInvocationName:
 
         mock_smapi_cls.return_value.async_update_manifest.assert_awaited_once_with(
             "amzn1.ask.skill.123", "https://example.com/api/alexa_proactive", "homeassistant notifier"
+        )
+        mock_smapi_cls.return_value.async_upload_models.assert_awaited_once_with(
+            "amzn1.ask.skill.123", "homeassistant notifier", ["en-US"]
         )
         hass.config_entries.async_update_entry.assert_called_once()
         update_kwargs = hass.config_entries.async_update_entry.call_args[1]
