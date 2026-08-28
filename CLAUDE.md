@@ -91,7 +91,7 @@ Integration-suite notes: the plugin's `pytest11` entry point is named `homeassis
 
 Users install via HACS and consume GitHub releases; the home instance tracks master via manual scp.
 
-Release: bump `version` in `custom_components/alexa_proactive/manifest.json`, commit, `git tag vX.Y.Z && git push origin vX.Y.Z`, then `gh release create vX.Y.Z --notes-file <file>`.
+Release: bump `version` in `custom_components/alexa_proactive/manifest.json`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The `Release` workflow (`.github/workflows/release.yml`) zips `custom_components/alexa_proactive` and attaches `alexa_proactive.zip` to the release; it needs the `permissions: contents: write` block (added 2026-08-28 after the first-ever run failed with "Resource not accessible by integration"). Then add the notes with `gh release edit vX.Y.Z --notes-file <file>` and verify the run went green and the asset is attached before announcing the release.
 
 Home instance deploy: back up `ha:/homeassistant/custom_components/alexa_proactive/` first, scp the changed files (translations go under `translations/`), verify checksums on the target, restart HA (ask first), then confirm the reload via fresh `__pycache__` timestamps and the config entry state in `.storage/core.config_entries`.
 
