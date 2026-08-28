@@ -22,18 +22,26 @@ def _get_proactive_payload(aioclient_mock):
     raise AssertionError("No proactive events call found")
 
 
-async def test_send_default_params(setup_entry, aioclient_mock):
+async def test_send_default_params(setup_entry, aioclient_mock, caplog):
     """Service call with defaults hits LWA token + Proactive Events API."""
+    import logging
+
     hass, _entry = setup_entry
 
     aioclient_mock.post(PROACTIVE_URL, json={}, status=200)
 
-    await hass.services.async_call(DOMAIN, SERVICE_SEND, {}, blocking=True)
-    await hass.async_block_till_done()
+    with caplog.at_level(logging.INFO, logger="custom_components.alexa_proactive"):
+        await hass.services.async_call(DOMAIN, SERVICE_SEND, {}, blocking=True)
+        await hass.async_block_till_done()
 
     calls = [str(c) for c in aioclient_mock.mock_calls]
     assert any("api.amazon.com" in c for c in calls)
     assert any("proactiveEvents" in c for c in calls)
+    # INFO-level trail survives HA's default log config and is what the
+    # troubleshooting docs tell users to grep for.
+    assert "Sending proactive notification" in caplog.text
+    assert "audience=multicast" in caplog.text
+    assert "Proactive event accepted" in caplog.text
 
 
 async def test_send_custom_sender_and_count(setup_entry, aioclient_mock):

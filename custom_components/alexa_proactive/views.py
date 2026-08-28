@@ -120,6 +120,7 @@ class AlexaProactiveView(HomeAssistantView):
     async def _store_user_id(self, user_id: str) -> None:
         """Persist the captured user ID into the config entries so unicast
         targeting survives Home Assistant restarts."""
+        _LOGGER.info("Captured Alexa user ID; persisted for unicast targeting")
         for entry in self._hass.config_entries.async_entries(DOMAIN):
             self._hass.config_entries.async_update_entry(
                 entry, data={**entry.data, CONF_ALEXA_USER_ID: user_id}

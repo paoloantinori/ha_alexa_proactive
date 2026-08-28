@@ -1,6 +1,8 @@
 """The Alexa Proactive Events integration."""
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -11,6 +13,8 @@ from .api import LWAClient
 from .const import CONF_ALEXA_USER_ID, CONF_CLIENT_ID, CONF_CLIENT_SECRET, CONF_COUNT, CONF_REGION, CONF_REFRESH_TOKEN, CONF_SENDER, CONF_SKILL_CLIENT_ID, CONF_SKILL_CLIENT_SECRET, DEFAULT_COUNT, DEFAULT_REGION, DEFAULT_SENDER, DOMAIN, SCOPE_SMAPI, SERVICE_SEND
 from .proactive import ProactiveClient
 from .views import AlexaProactiveView
+
+_LOGGER = logging.getLogger(__name__)
 
 _SERVICE_SCHEMA = vol.Schema(
     {
@@ -37,6 +41,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             raise ServiceValidationError("Integration not fully initialized")
 
         user_id = entry.data.get(CONF_ALEXA_USER_ID)
+        _LOGGER.info(
+            "Sending proactive notification: sender=%r count=%d audience=%s",
+            sender, count, "unicast" if user_id else "multicast",
+        )
         await client.async_send(sender=sender, count=count, user_id=user_id)
 
     hass.services.async_register(DOMAIN, SERVICE_SEND, _handle_send, schema=_SERVICE_SCHEMA)

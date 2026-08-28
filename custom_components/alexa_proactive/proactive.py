@@ -106,6 +106,11 @@ class ProactiveClient:
                     _LOGGER.error("Bad proactive event payload: %s", body)
                     raise HomeAssistantError(f"Invalid proactive event payload: {body[:200]}")
                 resp.raise_for_status()
+                _LOGGER.info(
+                    "Proactive event accepted: status=%s referenceId=%s",
+                    resp.status, payload["referenceId"],
+                )
+                _LOGGER.debug("Proactive event payload: %s", payload)
                 return await resp.json() if await resp.text() else {}
         except HomeAssistantError:
             raise
