@@ -54,7 +54,16 @@ curl -s -X POST http://localhost:8123/api/onboarding/users \
   -d '{"client_id":"https://localhost:8123","name":"Test","username":"test","password":"testpassword123","language":"en"}'
 ```
 
-Then complete remaining onboarding steps via the UI, or call the login flow (see "Getting a token" below).
+The response contains an `auth_code`: exchange it for a token first (see
+"Getting a Token" below), because the remaining onboarding steps
+(`core_config`, `analytics`, `integration`) require that bearer token. The
+`integration` step also requires a `redirect_uri` field:
+
+```bash
+curl -s -X POST http://localhost:8123/api/onboarding/integration \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"client_id":"https://localhost:8123","redirect_uri":"https://localhost:8123"}'
+```
 
 ## Starting the Server
 
