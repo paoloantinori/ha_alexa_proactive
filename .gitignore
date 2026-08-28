@@ -9,3 +9,8 @@ build/
 *.so
 .test_env/
 .test_ha/
+
+# Local agent/session state
+.claude/
+.serena/
+backlog/
