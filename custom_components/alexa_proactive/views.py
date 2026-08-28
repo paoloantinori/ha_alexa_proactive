@@ -81,7 +81,7 @@ class AlexaProactiveView(HomeAssistantView):
 
         result = handler(req, user_id)
         if user_id and request_type == "LaunchRequest":
-            self._store_user_id(user_id)
+            await self._store_user_id(user_id)
 
         _LOGGER.warning("Alexa responding to %s: %s", request_type, str(result)[:300])
         return self._alexa_json(result)
@@ -117,13 +117,13 @@ class AlexaProactiveView(HomeAssistantView):
         _LOGGER.info("Proactive subscription changed: %s", subscriptions)
         return _EMPTY_RESPONSE
 
-    def _store_user_id(self, user_id: str) -> None:
-        entries = self._hass.data.get(DOMAIN)
-        if not entries:
-            return
-        for key, entry_data in entries.items():
-            if isinstance(entry_data, dict) and key not in ("auth_codes", "_callback_registered"):
-                entry_data[CONF_ALEXA_USER_ID] = user_id
+    async def _store_user_id(self, user_id: str) -> None:
+        """Persist the captured user ID into the config entries so unicast
+        targeting survives Home Assistant restarts."""
+        for entry in self._hass.config_entries.async_entries(DOMAIN):
+            self._hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_ALEXA_USER_ID: user_id}
+            )
 
 
 class AlexaAuthCallbackView(HomeAssistantView):

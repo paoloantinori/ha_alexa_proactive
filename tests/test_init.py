@@ -45,7 +45,7 @@ def _load_init():
 
 def _make_hass():
     hass = MagicMock()
-    hass.data = {"alexa_proactive": {"test_entry": {"alexa_user_id": "amzn1.ask.user.test"}}}
+    hass.data = {"alexa_proactive": {"test_entry": {}}}
     hass.services = MagicMock()
     hass.http = MagicMock()
 
@@ -62,6 +62,7 @@ def _make_hass():
         "refresh_token": "Atzr|test_refresh",
         "skill_client_id": "amzn1.application-oa2-client.skill123",
         "skill_client_secret": "skill_secret_456",
+        "alexa_user_id": "amzn1.ask.user.test",
     }
     entry.runtime_data = None
 

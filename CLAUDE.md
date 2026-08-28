@@ -73,7 +73,7 @@ OAuth callback (views.py — AlexaAuthCallbackView):
 Tests live in `tests/` and use `importlib.util` to load modules without HA's import machinery. `conftest.py` mocks all `homeassistant.*` modules and provides shared fixtures (`ha_error`, fake `HomeAssistantView`, fake `ConfigFlow`).
 
 ```bash
-python -m pytest tests/ -v          # Run all 166 tests
+python -m pytest tests/ -v          # Run the full test suite
 python -m pytest tests/test_init.py  # Run specific module
 ```
 

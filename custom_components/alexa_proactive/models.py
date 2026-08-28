@@ -1,6 +1,7 @@
 """Alexa interaction model templates."""
 
 import copy
+import unicodedata
 
 from .const import LOCALE_LABELS
 
@@ -283,6 +284,41 @@ _DEFAULT_INVOCATION = "ping me"
 
 def get_default_invocation(locale: str) -> str:
     return LOCALE_INVOCATION_NAMES.get(locale, _DEFAULT_INVOCATION)
+
+
+_INVOCATION_ALLOWED_PUNCTUATION = "'.-"
+
+
+def normalize_invocation_name(name: str) -> str:
+    """Normalize a user-entered invocation name to Amazon's expected form.
+
+    Amazon builds the interaction model only for lowercase names; whitespace
+    is collapsed and typographic apostrophes are mapped to the ASCII form.
+    """
+    return " ".join(name.replace("’", "'").lower().split())
+
+
+def validate_invocation_name(name: str) -> bool:
+    """True if the name passes the locale-agnostic sanity rules: non-empty,
+    fully lowercase, starting with a letter, and containing only Unicode
+    letters, digits, combining marks (e.g. the Arabic shadda in the shipped
+    ar-SA default), spaces, apostrophes, periods and hyphens.
+
+    This is a subset, not a guarantee: Amazon applies stricter per-locale
+    rules (en-US, for instance, requires numbers to be spelled out and does
+    not allow hyphens), so a name valid here can still fail the model build.
+    No word-count rule: some locales ship single-word default names.
+    """
+    if not name or name != name.lower() or not name[0].isalpha():
+        return False
+    return all(
+        ch.isalpha()
+        or ch.isdigit()
+        or unicodedata.category(ch).startswith("M")
+        or ch in _INVOCATION_ALLOWED_PUNCTUATION
+        or ch == " "
+        for ch in name
+    )
 
 
 def get_model(locale: str, invocation_name: str | None = None) -> dict:

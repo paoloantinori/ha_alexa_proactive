@@ -110,12 +110,19 @@ class TestLaunchRequest:
 
     @pytest.mark.asyncio
     async def test_captures_user_id(self, view, hass):
+        entry = MagicMock()
+        entry.data = {"skill_id": "amzn1.ask.skill.123"}
+        hass.config_entries.async_entries = MagicMock(return_value=[entry])
+
         event = {
             "request": {"type": "LaunchRequest"},
             "session": {"user": {"userId": "amzn1.ask.user.abc123"}},
         }
         await view.post(_make_request(event))
-        assert hass.data["alexa_proactive"]["entry_abc"]["alexa_user_id"] == "amzn1.ask.user.abc123"
+
+        hass.config_entries.async_update_entry.assert_called_once_with(
+            entry, data={"skill_id": "amzn1.ask.skill.123", "alexa_user_id": "amzn1.ask.user.abc123"}
+        )
 
 
 # ---------------------------------------------------------------------------

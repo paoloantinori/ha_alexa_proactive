@@ -36,7 +36,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         if client is None:
             raise ServiceValidationError("Integration not fully initialized")
 
-        user_id = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get(CONF_ALEXA_USER_ID)
+        user_id = entry.data.get(CONF_ALEXA_USER_ID)
         await client.async_send(sender=sender, count=count, user_id=user_id)
 
     hass.services.async_register(DOMAIN, SERVICE_SEND, _handle_send, schema=_SERVICE_SCHEMA)

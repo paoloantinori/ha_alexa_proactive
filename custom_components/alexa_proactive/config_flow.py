@@ -30,7 +30,7 @@ from .const import (
     LOCALE_LABELS,
     SCOPE_SMAPI,
 )
-from .models import get_default_invocation, get_model
+from .models import get_default_invocation, get_model, normalize_invocation_name, validate_invocation_name
 from .smapi import SMTPClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,10 +65,18 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         self._ensure_callback_view()
         if user_input:
+            invocation_name = normalize_invocation_name(user_input[CONF_INVOCATION_NAME])
+            if not validate_invocation_name(invocation_name):
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=self._user_schema(),
+                    errors={CONF_INVOCATION_NAME: "invalid_invocation_name"},
+                )
+
             self._client_id = user_input[CONF_CLIENT_ID].strip()
             self._client_secret = user_input[CONF_CLIENT_SECRET].strip()
             self._region = user_input[CONF_REGION]
-            self._invocation_name = user_input[CONF_INVOCATION_NAME].strip()
+            self._invocation_name = invocation_name
             self._selected_locales = user_input.get(CONF_LOCALES, self._get_suggested_locales())
 
             await self.async_set_unique_id(self._client_id)
@@ -77,10 +85,13 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._lwa_client = LWAClient(self.hass, self._client_id, self._client_secret)
             return await self.async_step_auth_smapi()
 
+        return self.async_show_form(step_id="user", data_schema=self._user_schema(), errors=errors)
+
+    def _user_schema(self) -> vol.Schema:
         suggested_locales = self._get_suggested_locales()
         default_invocation = get_default_invocation(suggested_locales[0]) if suggested_locales else DEFAULT_INVOCATION_NAME
 
-        schema = vol.Schema({
+        return vol.Schema({
             vol.Required(CONF_CLIENT_ID): str,
             vol.Required(CONF_CLIENT_SECRET): str,
             vol.Required(CONF_REGION, default=DEFAULT_REGION): SelectSelector(
@@ -91,7 +102,6 @@ class AlexaProactiveConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 SelectSelectorConfig(options=_LOCALE_OPTIONS, multiple=True, sort=True)
             ),
         })
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_auth_smapi(self, user_input: dict | None = None):
         """Authorize with SMAPI scope via authorization code flow."""
@@ -247,8 +257,19 @@ class AlexaProactiveOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict | None = None):
         errors: dict[str, str] = {}
         if user_input is not None:
-            new_name = user_input[CONF_INVOCATION_NAME].strip()
-            old_name = self._config_entry.data.get(CONF_INVOCATION_NAME, DEFAULT_INVOCATION_NAME)
+            new_name = normalize_invocation_name(user_input[CONF_INVOCATION_NAME])
+            old_name = normalize_invocation_name(
+                self._config_entry.data.get(CONF_INVOCATION_NAME, DEFAULT_INVOCATION_NAME)
+            )
+
+            if not validate_invocation_name(new_name):
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=vol.Schema({
+                        vol.Required(CONF_INVOCATION_NAME, default=user_input[CONF_INVOCATION_NAME]): str,
+                    }),
+                    errors={CONF_INVOCATION_NAME: "invalid_invocation_name"},
+                )
 
             if new_name != old_name:
                 try:

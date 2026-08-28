@@ -203,6 +203,26 @@ class TestStepUser:
         flow.async_step_auth_smapi.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_digit_start_invocation_name_shows_error(self, flow, ha_error):
+        flow.async_step_auth_smapi = AsyncMock()
+
+        await flow.async_step_user({**_USER_INPUT, "invocation_name": "4 notifications"})
+
+        flow.async_show_form.assert_called_once()
+        assert _extract_form_errors(flow) == {"invocation_name": "invalid_invocation_name"}
+        flow.async_set_unique_id.assert_not_called()
+        flow.async_step_auth_smapi.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uppercase_invocation_name_is_normalized(self, flow, ha_error):
+        flow.async_step_auth_smapi = AsyncMock(return_value={"type": "form", "step_id": "auth_smapi"})
+
+        await flow.async_step_user({**_USER_INPUT, "invocation_name": "  HomeAssistant   Notifier "})
+
+        assert flow._invocation_name == "homeassistant notifier"
+        flow.async_step_auth_smapi.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_schema_has_region_field(self, flow):
         await flow.async_step_user(None)
         schema = flow.async_show_form.call_args[1]["data_schema"]
@@ -472,3 +492,86 @@ class TestGetSuggestedLocales:
         hass.config.country = "XX"
         hass.config.language = "xx"
         assert flow._get_suggested_locales() == ["en-US"]
+
+
+# ---------------------------------------------------------------------------
+# Test: Options flow invocation name handling
+# ---------------------------------------------------------------------------
+
+
+class TestOptionsFlowInvocationName:
+
+    def _make_entry(self):
+        entry = MagicMock()
+        entry.data = {
+            "client_id": "test_id",
+            "client_secret": "test_secret",
+            "region": "eu",
+            "invocation_name": "ping me",
+            "locales": ["en-US"],
+            "skill_id": "amzn1.ask.skill.123",
+            "vendor_id": "VENDOR123",
+            "webhook_url": "https://example.com/api/alexa_proactive",
+            "refresh_token": "Atzr|test_refresh",
+            "alexa_user_id": "amzn1.ask.user.persisted",
+        }
+        return entry
+
+    def _make_options_flow(self, config_flow_mod, hass, entry):
+        flow = config_flow_mod.AlexaProactiveOptionsFlow(entry)
+        flow.hass = hass
+        flow.async_show_form = MagicMock(return_value={"type": "form"})
+        flow.async_create_entry = MagicMock(return_value={"type": "create_entry"})
+        return flow
+
+    @pytest.mark.asyncio
+    async def test_digit_start_rename_shows_error(self, config_flow_mod, hass, ha_error):
+        entry = self._make_entry()
+        flow = self._make_options_flow(config_flow_mod, hass, entry)
+
+        with patch("alexa_proactive.config_flow.LWAClient") as mock_lwa:
+            await flow.async_step_init({"invocation_name": "4 notifications"})
+
+        flow.async_show_form.assert_called_once()
+        assert _extract_form_errors(flow) == {"invocation_name": "invalid_invocation_name"}
+        mock_lwa.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unchanged_legacy_name_is_noop(self, config_flow_mod, hass, ha_error):
+        """A stored non-normalized legacy name, resubmitted unchanged, must not
+        trigger a remote manifest PUT or an entry.data rewrite (C1)."""
+        entry = self._make_entry()
+        entry.data["invocation_name"] = "Ping Me"
+        flow = self._make_options_flow(config_flow_mod, hass, entry)
+
+        with patch("alexa_proactive.config_flow.LWAClient") as mock_lwa:
+            await flow.async_step_init({"invocation_name": "Ping Me"})
+
+        mock_lwa.assert_not_called()
+        hass.config_entries.async_update_entry.assert_not_called()
+        flow.async_create_entry.assert_called_once_with(
+            title="", data={"invocation_name": "ping me"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_rename_normalizes_and_preserves_user_id(self, config_flow_mod, hass, ha_error):
+        entry = self._make_entry()
+        flow = self._make_options_flow(config_flow_mod, hass, entry)
+
+        with (
+            patch("alexa_proactive.config_flow.LWAClient") as mock_lwa_cls,
+            patch("alexa_proactive.config_flow.SMTPClient", autospec=True) as mock_smapi_cls,
+        ):
+            mock_lwa_cls.return_value = MagicMock()
+            await flow.async_step_init({"invocation_name": "  HomeAssistant Notifier "})
+
+        mock_smapi_cls.return_value.async_update_manifest.assert_awaited_once_with(
+            "amzn1.ask.skill.123", "https://example.com/api/alexa_proactive", "homeassistant notifier"
+        )
+        hass.config_entries.async_update_entry.assert_called_once()
+        update_kwargs = hass.config_entries.async_update_entry.call_args[1]
+        assert update_kwargs["data"]["invocation_name"] == "homeassistant notifier"
+        assert update_kwargs["data"]["alexa_user_id"] == "amzn1.ask.user.persisted"
+        flow.async_create_entry.assert_called_once_with(
+            title="", data={"invocation_name": "homeassistant notifier"}
+        )

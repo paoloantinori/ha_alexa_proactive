@@ -30,10 +30,24 @@
       "invalid_auth": "Authorization failed. Please try again.",
       "cannot_connect": "Cannot connect to Amazon API. Check your credentials.",
       "authorization_pending": "Authorization not yet completed. Click the link above, authorize, then click Submit.",
-      "smapi_error": "SMAPI skill creation failed. Check your credentials and region."
+      "smapi_error": "SMAPI skill creation failed. Check your credentials and region.",
+      "invalid_invocation_name": "The invocation name must be lowercase, start with a letter, and use only letters, numbers, spaces, apostrophes, periods and hyphens. Some Alexa locales are stricter (English, for example, requires numbers to be spelled out)."
     },
     "abort": {
       "already_configured": "This integration is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "invocation_name": "Skill Invocation Name"
+        }
+      }
+    },
+    "error": {
+      "smapi_error": "SMAPI skill creation failed. Check your credentials and region.",
+      "invalid_invocation_name": "The invocation name must be lowercase, start with a letter, and use only letters, numbers, spaces, apostrophes, periods and hyphens. Some Alexa locales are stricter (English, for example, requires numbers to be spelled out)."
     }
   }
 }

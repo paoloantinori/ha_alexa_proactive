@@ -192,3 +192,43 @@ class TestGetModel:
     def test_raises_on_unknown_locale(self, models):
         with pytest.raises(KeyError):
             models.get_model("xx-XX")
+
+
+# ---------------------------------------------------------------------------
+# Test: invocation name normalization and validation
+# ---------------------------------------------------------------------------
+
+
+class TestInvocationNameValidation:
+
+    def test_normalize_lowercases_strips_and_collapses(self, models):
+        assert models.normalize_invocation_name("  HomeAssistant   Notifier ") == "homeassistant notifier"
+
+    def test_normalize_is_unicode_aware(self, models):
+        assert models.normalize_invocation_name("PRÉVIENS MOI") == "préviens moi"
+
+    def test_normalize_maps_typographic_apostrophe(self, models):
+        assert models.normalize_invocation_name("l’assistente") == "l'assistente"
+
+    def test_all_default_invocation_names_are_valid(self, models):
+        for locale, name in models.LOCALE_INVOCATION_NAMES.items():
+            normalized = models.normalize_invocation_name(name)
+            assert models.validate_invocation_name(normalized), f"default for {locale} fails validation: {name!r}"
+
+    def test_accepts_valid_names(self, models):
+        for name in ["ping me", "notify me 2", "préviens moi", "おしらせ", "aviso rápido"]:
+            assert models.validate_invocation_name(name), f"{name!r} should be valid"
+
+    def test_rejects_empty(self, models):
+        assert not models.validate_invocation_name("")
+        assert not models.validate_invocation_name("   ")
+
+    def test_rejects_digit_start(self, models):
+        assert not models.validate_invocation_name("4 notifications")
+
+    def test_rejects_uppercase(self, models):
+        assert not models.validate_invocation_name("Ping Me")
+
+    def test_rejects_invalid_characters(self, models):
+        for name in ["ping@me", "ping/me", "ping_me", "ping!"]:
+            assert not models.validate_invocation_name(name), f"{name!r} should be invalid"

@@ -140,7 +140,17 @@ automation:
 - Check the Home Assistant logs for the specific SMAPI error
 
 **Alexa doesn't show the yellow ring**
-- Ensure you've enabled the skill in the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask) — the automatic enablement step may fail if the interaction model hasn't finished processing. If you see "Skill is not ready for enablement" in the logs, just enable it manually in the console.
+
+First check how far the notification gets: ask Alexa to read your notifications. If Alexa reads the message back, the event was delivered and stored, and the problem is the alerting on the device you are watching. Work through this list in order:
+
+1. **Notification subscription for the skill**: Amazon requires enabling Notifications for the skill in the Alexa app to receive proactive events, and development-stage skills subscribe via the Notifications settings in the Alexa app. Look for the skill under Settings > Notifications, or under Your Skills > Dev Skills > [skill] > Settings. If you ever re-ran setup or re-enabled the skill, this toggle can silently reset; toggling it off and on again is worth a try.
+2. **Do Not Disturb on that specific Echo** (Alexa app > Devices > your Echo > Settings > Do Not Disturb): DND silences the ring and the announcement while the notification still lands in your feed. Watch out for a scheduled DND window too.
+3. **Per-device notification settings** on that same Echo (Settings > Notifications): make sure notifications aren't muted for the device.
+4. **Device type**: only Echo devices with a light ring show the yellow pulse; the phone app, Fire TV, and third-party Alexa devices don't. Watch an Echo with a light ring in the seconds right after sending a test.
+5. **Region**: the region picked during setup (North America / Europe / Far East) must match your Amazon account's marketplace. A mismatch can suppress alerts without any visible error.
+
+If nothing above helps:
+- Ensure you've enabled the skill in the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask). The automatic enablement step may fail if the interaction model hasn't finished processing; if you see "Skill is not ready for enablement" in the logs, just enable it manually in the console.
 - Say "Alexa, open [invocation name]" to trigger user ID capture
 - Verify your HA external URL is reachable from the internet
 
