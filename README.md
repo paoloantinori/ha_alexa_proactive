@@ -8,7 +8,7 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 2. **Skill Endpoint**: A custom HTTP view acts as the Alexa skill endpoint, handling Launch, Intent, and SessionEnded requests.
 
-3. **Proactive Notifications**: Call the `alexa_proactive.send` service from any automation to push a notification to your Alexa devices. Notifications use a service-level `client_credentials` grant (separate from the user authorization), so no user login is needed at runtime. Alexa shows a yellow ring and announces the notification in the format: **"You have N messages from [skill name]: [message]."**
+3. **Proactive Notifications**: Call the `alexa_proactive.send` service from any automation to push a notification to your Alexa devices. Notifications use a service-level `client_credentials` grant (separate from the user authorization), so no user login is needed at runtime. Alexa shows a yellow ring and announces the notification using the sender name: **"You have N messages from [sender]."**
 
 ## Prerequisites
 
@@ -52,18 +52,18 @@ A Home Assistant custom integration that sends proactive notifications (yellow r
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `sender` | string | `"Home Assistant"` | Message text shown after the skill name in the notification |
+| `sender` | string | `"Home Assistant"` | Name announced as the message source ("You have N messages from ...") |
 | `count` | integer | `1` | Number of unread messages (1–99) |
 
 ### Notification Format
 
 When a notification is sent, Alexa shows a yellow ring and announces:
 
-> "You have `[count]` messages from `[skill name]`: `[sender]`"
+> "You have `[count]` messages from `[sender]`"
 
-Where:
-- **skill name** — the invocation name set during configuration (editable via Options)
-- **sender** — the message text you provide in the service call
+The `sender` you pass in the service call is the only customizable text: the `AMAZON.MessageAlert.Activated` schema has no free-form message body.
+
+The invocation name set during configuration can be changed later via the integration's **Options**; since v1.2.0 the rename also updates the skill on Amazon's side, so the new name works for voice right away (the interaction model rebuild takes a moment).
 
 ### Automation Examples
 
@@ -140,6 +140,8 @@ automation:
 - Check the Home Assistant logs for the specific SMAPI error
 
 **Alexa doesn't show the yellow ring**
+
+On v1.2.0 or newer, every send is logged at INFO level: open Settings > System > Logs, filter for `alexa_proactive`, and you will see "Sending proactive notification: sender=... audience=unicast/multicast", then either "Proactive event accepted" (Amazon took the event) or "Proactive Events API 403" (Amazon refused delivery; see the permission items below).
 
 First check how far the notification gets: ask Alexa to read your notifications. If Alexa reads the message back, the event was delivered and stored, and the problem is the alerting on the device you are watching. Work through this list in order:
 

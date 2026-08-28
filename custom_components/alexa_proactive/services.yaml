@@ -4,7 +4,7 @@ send:
   fields:
     sender:
       name: Message
-      description: "Text displayed in the notification after the skill name (e.g. 'notification from [skill name]: [this value]')"
+      description: "Name announced as the message source (Alexa says 'You have N messages from [this value]')"
       required: false
       example: "Front Door"
       default: "Home Assistant"
