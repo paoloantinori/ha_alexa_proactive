@@ -14,3 +14,6 @@ build/
 .claude/
 .serena/
 backlog/
+
+# Integration-test run residue (real HA config dir with local db/logs)
+tests_integration/ha_test_config/
