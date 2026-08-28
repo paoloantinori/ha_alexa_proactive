@@ -5,10 +5,12 @@ Read this file BEFORE starting or restarting the HA dev server. Every step matte
 ## Config Location
 
 The test config lives in the project at `tests_integration/ha_test_config/`.
-It persists across reboots. Storage, DB, and logs are gitignored.
-
-The `configuration.yaml` is committed — it contains no secrets (only proxy + logger config).
-Secrets (auth tokens, credentials) are stored in `.storage/` which is gitignored.
+The whole directory is gitignored: it contains `.storage/` (auth tokens,
+onboarding state) plus the recorder DB and logs, so it exists only on this
+machine. If it is ever lost, recreate it by following this document from the
+top; the `.venv/` survives independently. The `configuration.yaml` it carried
+held only proxy, logger, and `trusted_proxies` config (`::/0` for the reverse
+proxy).
 
 ## One-time Setup
 
@@ -70,7 +72,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8123
 
 ## Setting external_url (MUST be done after first startup)
 
-The external_url CANNOT be set by editing the storage file — HA ignores it.
+The external_url CANNOT be set by editing the storage file; HA ignores it.
 It MUST be set via WebSocket `config/core/update`. Only needs to be done once
 (persists in `.storage/core.config` until wiped).
 
@@ -134,7 +136,7 @@ find custom_components -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
 nohup .venv/bin/hass --config tests_integration/ha_test_config > /tmp/ha_test.log 2>&1 &
 ```
 
-## Resetting (nuclear option — wipes all stored state)
+## Resetting (nuclear option; wipes all stored state)
 
 ```bash
 pkill -f "hass --config tests_integration/ha_test_config" 2>/dev/null
@@ -142,7 +144,7 @@ sleep 2
 rm -rf tests_integration/ha_test_config/.storage \
        tests_integration/ha_test_config/*.db* \
        tests_integration/ha_test_config/*.log*
-# Then restart — will need to redo onboarding + external_url
+# Then restart; onboarding + external_url will need to be redone
 ```
 
 ## Infrastructure
@@ -154,7 +156,7 @@ rm -rf tests_integration/ha_test_config/.storage \
 
 ## Common Mistakes
 
-- **pycares 5.0.1 breaks aiodns 3.2.0** — must downgrade to pycares 4.4.0 after `uv pip install homeassistant`
-- **Editing core.config storage file directly does NOT work** — must use WebSocket `config/core/update`
-- **Missing `::/0` in trusted_proxies** — needed to accept requests from any IPv6 source through the reverse proxy
-- **Forgetting to clear `__pycache__`** — old bytecode masks code changes on restart
+- **pycares 5.0.1 breaks aiodns 3.2.0**: downgrade to pycares 4.4.0 after `uv pip install homeassistant`
+- **Editing core.config storage file directly does NOT work**: use WebSocket `config/core/update`
+- **Missing `::/0` in trusted_proxies**: needed to accept requests from any IPv6 source through the reverse proxy
+- **Forgetting to clear `__pycache__`**: old bytecode masks code changes on restart
