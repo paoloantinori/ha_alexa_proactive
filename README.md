@@ -150,10 +150,11 @@ First check how far the notification gets: ask Alexa to read your notifications.
 3. **Per-device notification settings** on that same Echo (Settings > Notifications): make sure notifications aren't muted for the device.
 4. **Device type**: only Echo devices with a light ring show the yellow pulse; the phone app, Fire TV, and third-party Alexa devices don't. Watch an Echo with a light ring in the seconds right after sending a test.
 5. **Region**: the region picked during setup (North America / Europe / Far East) must match your Amazon account's marketplace. A mismatch can suppress alerts without any visible error.
+6. **Alexa+ early access**: if your Amazon account is enrolled in the Alexa+ preview (Amazon has been enrolling Prime accounts automatically since January 2026), skill notifications can lose the physical alert: no yellow ring and no chime, while the notification still lands in your feed and Alexa reads it back when asked. This happens on Amazon's side and is outside the integration's control; leaving the Alexa+ preview and switching back to classic Alexa (voice command, for example "Alexa, esci da Alexa Plus" on Italian devices) restores the ring immediately, which is the fastest way to confirm this is the cause. Reports differ on whether first-party alerts (package deliveries) are affected too, so the behavior may vary between Alexa+ rollout groups.
 
 If nothing above helps:
 - Ensure you've enabled the skill in the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask). The automatic enablement step may fail if the interaction model hasn't finished processing; if you see "Skill is not ready for enablement" in the logs, just enable it manually in the console.
-- Say "Alexa, open [invocation name]" to trigger user ID capture
+- Say "Alexa, open [invocation name]" to trigger user ID capture (on Alexa+ early access, voice invocation may not reach the skill; open the skill once from the Developer Console's Test tab simulator instead, which sends a real LaunchRequest to your endpoint and captures the user ID the same way)
 - Verify your HA external URL is reachable from the internet
 
 **"Alexa says there was a problem" / INVALID_RESPONSE when opening the skill**

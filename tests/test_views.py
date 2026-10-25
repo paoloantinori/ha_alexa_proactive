@@ -238,11 +238,28 @@ class TestExceptionEncountered:
 class TestSubscriptionChanged:
 
     @pytest.mark.asyncio
-    async def test_returns_empty_response(self, view):
+    async def test_returns_empty_response(self, view, caplog):
         event = {
             "request": {
-                "type": "AlexaSkillEvent.SkillProactiveSubscriptionChanged",
+                "type": "AlexaSkillEvent.ProactiveSubscriptionChanged",
                 "body": {"subscriptions": [{"eventName": "AMAZON.MessageAlert.Activated"}]},
+            },
+            "session": {},
+        }
+        resp = await view.post(_make_request(event))
+        body = json.loads(resp.body)
+        assert body["response"] == {}
+        assert "Proactive subscription changed" in caplog.text
+
+
+class TestOtherSkillEvents:
+
+    @pytest.mark.asyncio
+    async def test_skill_enabled_returns_empty_response(self, view):
+        event = {
+            "request": {
+                "type": "AlexaSkillEvent.SkillEnabled",
+                "body": {"userId": "amzn1.ask.account.ABC"},
             },
             "session": {},
         }

@@ -46,7 +46,7 @@ class AlexaProactiveView(HomeAssistantView):
         return web.Response(body=json_bytes(result), content_type="application/json")
 
     async def post(self, request: web.Request) -> web.Response:
-        _LOGGER.warning("Alexa POST received from %s", request.remote)
+        _LOGGER.info("Alexa POST received from %s", request.remote)
         try:
             event = await request.json()
         except Exception:
@@ -72,10 +72,18 @@ class AlexaProactiveView(HomeAssistantView):
             "IntentRequest": self._handle_intent,
             "SessionEndedRequest": lambda r, u: _EMPTY_RESPONSE,
             "System.ExceptionEncountered": self._handle_exception,
-            "AlexaSkillEvent.SkillProactiveSubscriptionChanged": self._handle_subscription_changed,
+            # Wire type has no "Skill" segment, unlike the manifest
+            # subscription eventName SKILL_PROACTIVE_SUBSCRIPTION_CHANGED.
+            "AlexaSkillEvent.ProactiveSubscriptionChanged": self._handle_subscription_changed,
         }.get(request_type)
 
         if handler is None:
+            if request_type.startswith("AlexaSkillEvent."):
+                # Other skill events (SkillEnabled, SkillDisabled, permission
+                # changes) are background events; they need an empty response,
+                # not a voice prompt.
+                _LOGGER.info("Unhandled AlexaSkillEvent: %s", request_type)
+                return self._alexa_json(_EMPTY_RESPONSE)
             _LOGGER.warning("Unknown request type: %s", request_type)
             return self._alexa_json(_speech_response("Say send notification or check status.", end_session=False, reprompt="What would you like to do?"))
 
@@ -83,7 +91,7 @@ class AlexaProactiveView(HomeAssistantView):
         if user_id and request_type == "LaunchRequest":
             await self._store_user_id(user_id)
 
-        _LOGGER.warning("Alexa responding to %s: %s", request_type, str(result)[:300])
+        _LOGGER.info("Alexa responding to %s: %s", request_type, str(result)[:300])
         return self._alexa_json(result)
 
     def _handle_launch(self, request: dict, user_id: str) -> dict:
